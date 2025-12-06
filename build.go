@@ -1,0 +1,91 @@
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+// ProcessBuild handles the build spec workflow
+func ProcessBuild(client *Client, config *ParsedConfig) error {
+	if config.BuildAsset == nil {
+		return fmt.Errorf("build asset is nil")
+	}
+
+	asset := config.BuildAsset
+
+	// Prepare build request
+	buildReq := map[string]interface{}{
+		"build":       asset.Type,
+		"type":        asset.Type,
+		"version":     asset.Version,
+		"title":       asset.Title,
+		"description": asset.Description,
+	}
+
+	// Add optional demo_url
+	if asset.Video != "" {
+		buildReq["demo_url"] = asset.Video
+	}
+
+	// Add optional changelog_items
+	if len(asset.Changelog) > 0 {
+		var changelogItems []map[string]string
+		for _, item := range asset.Changelog {
+			changelogItems = append(changelogItems, map[string]string{
+				"title":       item.Item.Title,
+				"description": item.Item.Description,
+			})
+		}
+		buildReq["changelog_items"] = changelogItems
+	}
+
+	// POST to /tool/upload/build
+	fmt.Println("Uploading build information...")
+	resp, err := client.PostJSON("/tool/upload/build", buildReq)
+	if err != nil {
+		return fmt.Errorf("failed to upload build: %w", err)
+	}
+
+	// Extract build_uid from response
+	buildUID, ok := resp.Data["build_uid"].(string)
+	if !ok {
+		return fmt.Errorf("build_uid not found in response")
+	}
+
+	fmt.Printf("Build uploaded successfully. Build UID: %s\n", buildUID)
+
+	// Upload images if provided
+	if len(asset.Images) > 0 {
+		fmt.Println("Uploading images...")
+		if err := uploadImages(client, buildUID, asset.Images); err != nil {
+			return fmt.Errorf("failed to upload images: %w", err)
+		}
+		fmt.Printf("Successfully uploaded %d image(s)\n", len(asset.Images))
+	}
+
+	return nil
+}
+
+// uploadImages uploads images to the build
+func uploadImages(client *Client, buildUID string, imagePaths []string) error {
+	// Validate all image files exist
+	for _, imgPath := range imagePaths {
+		if _, err := os.Stat(imgPath); os.IsNotExist(err) {
+			return fmt.Errorf("image file does not exist: %s", imgPath)
+		}
+	}
+
+	// Upload all images in a single request (server expects multiple "image" fields)
+	formData := map[string]string{
+		"build_uid": buildUID,
+	}
+
+	// Upload all images at once using the same field name
+	_, err := client.PostMultipartMultipleFiles("/tool/upload/images", formData, "image", imagePaths, nil)
+	if err != nil {
+		return fmt.Errorf("failed to upload images: %w", err)
+	}
+
+	fmt.Printf("  Successfully uploaded %d image(s)\n", len(imagePaths))
+	return nil
+}

@@ -1,0 +1,12 @@
+version: v1
+spec: addfiles
+asset:
+    type: "game"
+    version: 0.0.1
+    channel: "stable"
+    os: "windows"
+    files:
+        - file: ./dir/file.exe
+        - file: ./dir/license.txt
+        - file: ./dir/arg.wav
+    

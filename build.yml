@@ -1,0 +1,27 @@
+version: v1
+spec: build
+asset:
+    title: "Test Game update"
+    type: "game"
+    description: "Stuff"
+    version: 0.0.1
+    video: https://youtube.com/video
+    images:
+        - ./dir/image.png
+        - ./dir/image1.png
+        - ./dir/image2.png
+        - ./dir/image3.png
+        - ./dir/image4.png
+        - ./dir/image6.png
+        - ./dir/image7.png
+    changelog:
+        - item:
+            title: "Update 1"
+            description: "Stuff"
+        - item:
+            title: "Update 1"
+            description: "Stuff"
+        - item:
+            title: "Update 1"
+            description: "Stuff"
+    
