@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // ProcessFiles handles the addfiles spec workflow
@@ -32,7 +30,7 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 	fmt.Printf("All %d files validated\n", len(filePaths))
 
 	// Create temporary zip file
-	tempZip := filepath.Join(os.TempDir(), fmt.Sprintf("upload_%s.zip", uuid.New().String()))
+	tempZip := filepath.Join(os.TempDir(), fmt.Sprintf("upload_%d.zip", time.Now().UnixNano()))
 	defer os.Remove(tempZip) // Clean up temp file
 
 	fmt.Println("Creating zip file...")
@@ -58,18 +56,14 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 
 	// Prepare form data
 	formData := map[string]string{
-		"build_uid": "", // We'll use build+type+version instead
-		"build":     asset.Type,
-		"type":      asset.Type,
-		"version":   asset.Version,
-		"channel":   asset.Channel,
-		"os":        asset.OS,
-		"arch":      asset.Arch,
-		"checksum":  checksum,
+		"build":    asset.Type,
+		"type":     asset.Type,
+		"version":  asset.Version,
+		"channel":  asset.Channel,
+		"os":       asset.OS,
+		"arch":     asset.Arch,
+		"checksum": checksum,
 	}
-
-	// Generate session ID
-	sessionID := uuid.New().String()
 
 	// Upload file
 	fmt.Println("Uploading file...")
@@ -77,17 +71,34 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 		"file": tempZip,
 	}
 
-	headers := map[string]string{
-		"X-Upload-Session-ID": sessionID,
+	// Initial upload without session ID (server will provide one)
+	resp, sessionID, err := client.PostMultipart("https://uploader.blazium.online/api/v1/tool/upload/files", formData, files, nil)
+	if err != nil {
+		return fmt.Errorf("initial upload failed: %w", err)
 	}
 
-	_, err = client.PostMultipart("/tool/upload/files", formData, files, headers)
-	if err != nil {
-		// If upload fails, try resume
-		fmt.Printf("Initial upload failed, attempting resume: %v\n", err)
-		if resumeErr := uploadFileWithResume(client, tempZip, formData, fileSize, sessionID); resumeErr != nil {
-			return fmt.Errorf("upload failed: %w", resumeErr)
+	// Check if upload is complete or needs resume
+	if isUploadComplete(resp) {
+		fileUID, _ := resp.Data["file_uid"].(string)
+		status, _ := resp.Data["status"].(string)
+		fmt.Printf("File uploaded successfully. File UID: %s, Status: %s\n", fileUID, status)
+		return nil
+	}
+
+	// Upload is incomplete, need to resume
+	fmt.Println("Upload incomplete, resuming...")
+	if sessionID == "" {
+		// Try to get session_id from response data
+		if sessionIDFromData, ok := resp.Data["session_id"].(string); ok {
+			sessionID = sessionIDFromData
+		} else {
+			return fmt.Errorf("session_id not found in response")
 		}
+	}
+
+	// Resume upload
+	if err := uploadFileWithResume(client, tempZip, formData, fileSize, sessionID); err != nil {
+		return fmt.Errorf("resume upload failed: %w", err)
 	}
 
 	fmt.Println("File uploaded successfully")
@@ -96,19 +107,12 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 
 // uploadFileWithResume handles file upload with resume capability
 func uploadFileWithResume(client *Client, filePath string, formData map[string]string, totalSize int64, sessionID string) error {
-	const maxRetries = 3
 	var uploadedBytes int64
-	var lastError error
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			fmt.Printf("  Retry attempt %d/%d...\n", attempt, maxRetries)
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
-		}
-
+	for {
 		// Try uploading from current position
-		resp, err := client.PostMultipartResume(
-			"/tool/upload/files",
+		resp, newSessionID, err := client.PostMultipartResume(
+			"https://uploader.blazium.online/api/v1/tool/upload/files",
 			formData,
 			filePath,
 			uploadedBytes,
@@ -117,40 +121,104 @@ func uploadFileWithResume(client *Client, filePath string, formData map[string]s
 		)
 
 		if err != nil {
-			lastError = err
 			// Check if it's a retryable error
-			if isRetryableError(err) && attempt < maxRetries-1 {
+			if isRetryableError(err) {
+				fmt.Printf("  Retryable error, retrying...\n")
+				time.Sleep(2 * time.Second)
 				continue
 			}
 			return fmt.Errorf("upload failed: %w", err)
 		}
 
-		// Check if upload is complete
-		if resp.Data != nil {
-			if partial, ok := resp.Data["partial"].(bool); ok && partial {
-				// Partial upload successful - server should tell us the new position
-				// For now, assume we uploaded the entire remaining file
-				uploadedBytes = totalSize
-				fmt.Printf("  Partial upload successful, continuing...\n")
-				continue
-			}
+		// Update session ID if server provided a new one
+		if newSessionID != "" {
+			sessionID = newSessionID
 		}
 
-		// Upload complete
+		// Check if upload is complete
+		if isUploadComplete(resp) {
+			fileUID, _ := resp.Data["file_uid"].(string)
+			status, _ := resp.Data["status"].(string)
+			fmt.Printf("  Upload complete! File UID: %s, Status: %s\n", fileUID, status)
+			return nil
+		}
+
+		// Upload is incomplete, extract current_size and continue
+		if resp.Data != nil {
+			// Try to get current_size from response
+			var currentSize int64
+			if currentSizeFloat, ok := resp.Data["current_size"].(float64); ok {
+				currentSize = int64(currentSizeFloat)
+			} else if currentSizeInt, ok := resp.Data["current_size"].(int64); ok {
+				currentSize = currentSizeInt
+			} else if currentSizeInt, ok := resp.Data["current_size"].(int); ok {
+				currentSize = int64(currentSizeInt)
+			} else {
+				// If we can't get current_size, assume we uploaded everything
+				currentSize = totalSize
+			}
+
+			// Get progress if available
+			if progress, ok := resp.Data["progress"].(float64); ok {
+				fmt.Printf("  Upload progress: %.1f%% (%d/%d bytes)\n", progress, currentSize, totalSize)
+			} else {
+				fmt.Printf("  Upload progress: %d/%d bytes\n", currentSize, totalSize)
+			}
+
+			// Check if we've reached the end
+			if currentSize >= totalSize {
+				fmt.Printf("  Upload complete!\n")
+				return nil
+			}
+
+			uploadedBytes = currentSize
+
+			// Update session ID from response data if available
+			if sessionIDFromData, ok := resp.Data["session_id"].(string); ok && sessionIDFromData != "" {
+				sessionID = sessionIDFromData
+			}
+
+			// Continue with next chunk
+			continue
+		}
+
+		// If we can't determine status, assume complete
 		fmt.Printf("  Upload complete!\n")
 		return nil
 	}
+}
 
-	return fmt.Errorf("upload failed after %d attempts: %w", maxRetries, lastError)
+// isUploadComplete checks if the upload response indicates completion
+func isUploadComplete(resp *APIResponse) bool {
+	if resp.Data == nil {
+		return false
+	}
+	// Complete uploads have file_uid
+	_, hasFileUID := resp.Data["file_uid"]
+	// Incomplete uploads have session_id
+	_, hasSessionID := resp.Data["session_id"]
+	return hasFileUID && !hasSessionID
 }
 
 // isRetryableError checks if an error is retryable
 func isRetryableError(err error) bool {
 	errStr := strings.ToLower(err.Error())
 	// Check for network-related errors
-	return strings.Contains(errStr, "timeout") ||
+	if strings.Contains(errStr, "timeout") ||
 		strings.Contains(errStr, "connection") ||
 		strings.Contains(errStr, "network") ||
 		strings.Contains(errStr, "eof") ||
-		strings.Contains(errStr, "broken pipe")
+		strings.Contains(errStr, "broken pipe") {
+		return true
+	}
+	// Check for specific API error codes that are retryable
+	// 5000 - Internal Server Error (may be transient)
+	if strings.Contains(errStr, "[5000]") {
+		return true
+	}
+	// 4045 - Upload Session Not Found (session may have expired, retry with new session)
+	if strings.Contains(errStr, "[4045]") {
+		return true
+	}
+	return false
 }
