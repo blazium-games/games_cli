@@ -151,6 +151,37 @@ jobs:
           Compress-Archive -Path "$pkgRoot/chauffeur.exe","$pkgRoot/VERSION" -DestinationPath "$pkgRoot/archive/default.zip" -Force
           Rename-Item "$pkgRoot/archive/default.zip" "default"
 
+      - name: Package upload tool archive (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+        run: |
+          set -euo pipefail
+          pkg_root="artifacts/upload/${GOOS}-${GOARCH}/${VERSION}"
+          mkdir -p "$pkg_root/archive"
+          cp "dist/${GOOS}-${GOARCH}/upload" "$pkg_root/upload"
+          cp VERSION "$pkg_root/VERSION"
+          (cd "$pkg_root" && zip -j "archive/default.zip" "upload" "VERSION")
+          mv "$pkg_root/archive/default.zip" "$pkg_root/archive/default"
+
+      - name: Package upload tool archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+        run: |
+          $pkgRoot = "artifacts/upload/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION"
+          New-Item -ItemType Directory -Force -Path "$pkgRoot/archive" | Out-Null
+          Copy-Item "dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe" "$pkgRoot/upload.exe" -Force
+          Copy-Item "VERSION" "$pkgRoot/VERSION" -Force
+          Compress-Archive -Path "$pkgRoot/upload.exe","$pkgRoot/VERSION" -DestinationPath "$pkgRoot/archive/default.zip" -Force
+          Rename-Item "$pkgRoot/archive/default.zip" "default"
+
       - name: Upload archive (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -209,6 +240,70 @@ jobs:
           UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
         run: |
           $archivePath = "artifacts/${{ env.TOOL_NAME }}/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
+          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
+            --file $archivePath `
+            --path $Env:UPLOAD_PATH `
+            --acl public-read `
+            --storage STANDARD
+
+      - name: Upload upload tool archive (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/${{ steps.semver.outputs.revision_version }}/archive/
+        run: |
+          set -euo pipefail
+          ./dist/${GOOS}-${GOARCH}/upload \
+            --file "artifacts/upload/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
+            --path "$UPLOAD_PATH" \
+            --acl public-read \
+            --storage STANDARD
+
+      - name: Upload upload tool archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/${{ steps.semver.outputs.revision_version }}/archive/
+        run: |
+          $archivePath = "artifacts/upload/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
+          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
+            --file $archivePath `
+            --path $Env:UPLOAD_PATH `
+            --acl public-read `
+            --storage STANDARD
+
+      - name: Upload upload tool archive to latest (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
+        run: |
+          set -euo pipefail
+          ./dist/${GOOS}-${GOARCH}/upload \
+            --file "artifacts/upload/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
+            --path "$UPLOAD_PATH" \
+            --acl public-read \
+            --storage STANDARD
+
+      - name: Upload upload tool archive to latest (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
+        run: |
+          $archivePath = "artifacts/upload/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
           ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
             --file $archivePath `
             --path $Env:UPLOAD_PATH `
