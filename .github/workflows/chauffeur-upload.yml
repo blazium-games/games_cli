@@ -76,6 +76,48 @@ jobs:
           }
           Set-Content -Path ".env" -Value $Env:ENV_FILE
 
+      - name: Install go-winres (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          go install github.com/tc-hib/go-winres@latest
+
+      - name: Generate Windows resources for chauffeur (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+        run: |
+          # Parse version into major.minor.patch.build format
+          $versionParts = $Env:VERSION -split '\.'
+          $major = if ($versionParts.Length -gt 0) { $versionParts[0] } else { "1" }
+          $minor = if ($versionParts.Length -gt 1) { $versionParts[1] } else { "0" }
+          $patch = if ($versionParts.Length -gt 2) { $versionParts[2] -split '-' | Select-Object -First 1 } else { "0" }
+          $build = if ($versionParts.Length -gt 2) { ($versionParts[2] -split '-')[1] -replace '[^0-9]', '' } else { "0" }
+          if ([string]::IsNullOrEmpty($build)) { $build = "0" }
+          
+          # Generate resource file for chauffeur
+          go-winres make --in winres/chauffeur.json --out . --product-version "$major.$minor.$patch.$build" --file-version "$major.$minor.$patch.$build"
+
+      - name: Generate Windows resources for upload tool (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+        run: |
+          # Parse version into major.minor.patch.build format
+          $versionParts = $Env:VERSION -split '\.'
+          $major = if ($versionParts.Length -gt 0) { $versionParts[0] } else { "1" }
+          $minor = if ($versionParts.Length -gt 1) { $versionParts[1] } else { "0" }
+          $patch = if ($versionParts.Length -gt 2) { $versionParts[2] -split '-' | Select-Object -First 1 } else { "0" }
+          $build = if ($versionParts.Length -gt 2) { ($versionParts[2] -split '-')[1] -replace '[^0-9]', '' } else { "0" }
+          if ([string]::IsNullOrEmpty($build)) { $build = "0" }
+          
+          # Generate resource file for upload tool (in cmd/upload directory)
+          Push-Location cmd/upload
+          go-winres make --in ../../winres/upload.json --out . --product-version "$major.$minor.$patch.$build" --file-version "$major.$minor.$patch.$build"
+          Pop-Location
+
       - name: Build chauffeur CLI (Linux)
         if: runner.os == 'Linux'
         shell: bash

@@ -1,0 +1,24 @@
+# Windows resource configuration for Chauffeur CLI
+# This file is used by go-winres to generate Windows resource files
+
+# Version information
+version-info:
+  fixed:
+    file-version: "1.0.0.0"
+    product-version: "1.0.0.0"
+  info:
+    CompanyName: "Blazium"
+    FileDescription: "Chauffeur CLI for uploading builds and files"
+    FileVersion: "1.0.0.0"
+    InternalName: "chauffeur"
+    LegalCopyright: "© 2025 Blazium"
+    OriginalFilename: "chauffeur.exe"
+    ProductName: "Chauffeur CLI"
+    ProductVersion: "1.0.0.0"
+
+# Icon configuration (optional - comment out if icon.ico is not available)
+# icon: icon.ico
+
+# Manifest (optional, can be added if needed)
+# manifest: manifest.xml
+

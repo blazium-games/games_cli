@@ -1,0 +1,24 @@
+{
+  "RT_VERSION": {
+    "#1": {
+      "0000": {
+        "fixed": {
+          "file_version": "1.0.0.0",
+          "product_version": "1.0.0.0"
+        },
+        "info": {
+          "0409": {
+            "CompanyName": "Blazium",
+            "FileDescription": "Upload tool for CDN file uploads",
+            "FileVersion": "1.0.0.0",
+            "InternalName": "upload",
+            "LegalCopyright": "© 2025 Blazium",
+            "OriginalFilename": "upload.exe",
+            "ProductName": "Upload Tool",
+            "ProductVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  }
+}

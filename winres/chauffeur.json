@@ -1,0 +1,24 @@
+{
+  "RT_VERSION": {
+    "#1": {
+      "0000": {
+        "fixed": {
+          "file_version": "1.0.0.0",
+          "product_version": "1.0.0.0"
+        },
+        "info": {
+          "0409": {
+            "CompanyName": "Blazium",
+            "FileDescription": "Chauffeur CLI for uploading builds and files",
+            "FileVersion": "1.0.0.0",
+            "InternalName": "chauffeur",
+            "LegalCopyright": "© 2025 Blazium",
+            "OriginalFilename": "chauffeur.exe",
+            "ProductName": "Chauffeur CLI",
+            "ProductVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  }
+}
