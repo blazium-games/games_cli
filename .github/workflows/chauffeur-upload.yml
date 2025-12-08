@@ -22,12 +22,6 @@ jobs:
           - os: windows-latest
             goos: windows
             arch: amd64
-          - os: ubuntu-latest
-            goos: linux
-            arch: x86_64
-          - os: windows-latest
-            goos: windows
-            arch: x86_64
 
     permissions:
       contents: read
