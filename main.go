@@ -9,6 +9,7 @@ import (
 )
 
 const defaultAPIURL = "https://api.blazium.online/api/v1"
+
 var version = "dev"
 
 var (

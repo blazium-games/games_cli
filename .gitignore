@@ -3,3 +3,4 @@ ignore/
 *.md
 *.exe
 *.log
+.env
