@@ -189,3 +189,35 @@ jobs:
             --acl public-read `
             --storage STANDARD
 
+      - name: Upload archive to latest (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+          UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
+        run: |
+          set -euo pipefail
+          ./dist/${GOOS}-${GOARCH}/upload \
+            --file "artifacts/${TOOL_NAME}/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
+            --path "$UPLOAD_PATH" \
+            --acl public-read \
+            --storage STANDARD
+
+      - name: Upload archive to latest (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.semver.outputs.revision_version }}
+          UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
+        run: |
+          $archivePath = "artifacts/${{ env.TOOL_NAME }}/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
+          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
+            --file $archivePath `
+            --path $Env:UPLOAD_PATH `
+            --acl public-read `
+            --storage STANDARD
+
