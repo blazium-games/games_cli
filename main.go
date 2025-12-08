@@ -9,6 +9,7 @@ import (
 )
 
 const defaultAPIURL = "https://api.blazium.online/api/v1"
+var version = "dev"
 
 var (
 	accessToken string
@@ -19,9 +20,9 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "cli",
-	Short: "Blazium CLI tool for uploading builds and files",
-	Long:  `A CLI tool for uploading game builds and files to the Blazium games service.`,
+	Use:   "chauffeur",
+	Short: "Chauffeur CLI for uploading builds and files",
+	Long:  `Chauffeur uploads game builds and files to the Blazium games service.`,
 }
 
 // buildCmd represents the build command
@@ -121,6 +122,7 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	rootCmd.Version = version
 
 	// Persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().StringVarP(&accessToken, "access", "", "", "Blazium access token (overrides BLAZIUM_ACCESS_TOKEN env var)")
