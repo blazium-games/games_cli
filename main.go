@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 const defaultAPIURL = "https://api.blazium.online/api/v1"
@@ -121,6 +122,117 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 	},
 }
 
+// genbuildCmd represents the genbuild command
+var genbuildCmd = &cobra.Command{
+	Use:   "genbuild",
+	Short: "Generate a new build.yml file",
+	Long:  `Generate a new build.yml file with default values. Optionally scan a directory for images and set a version.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		imagesDir, _ := cmd.Flags().GetString("images")
+		version, _ := cmd.Flags().GetString("version")
+
+		// Default version if not provided
+		if version == "" {
+			version = "0.0.1"
+		}
+
+		// Scan images directory if provided
+		var imagePaths []string
+		if imagesDir != "" {
+			images, err := ScanImageDirectory(imagesDir)
+			if err != nil {
+				return fmt.Errorf("error scanning images directory: %w", err)
+			}
+			imagePaths = images
+			fmt.Printf("Found %d image(s) in directory\n", len(imagePaths))
+		}
+
+		// Create default build asset
+		buildAsset := BuildAsset{
+			Title:       "Untitled Build",
+			Type:        "game",
+			Description: "No description provided",
+			Version:     version,
+			Images:      imagePaths,
+			Changelog:   []ChangelogEntry{},
+		}
+
+		// Create config
+		config := &Config{
+			Version: "v1",
+			Spec:    "build",
+			Asset:   buildAsset,
+		}
+
+		// Write to build.yml
+		if err := WriteYAMLFile("build.yml", config); err != nil {
+			return fmt.Errorf("error writing build.yml: %w", err)
+		}
+
+		fmt.Println("Successfully generated build.yml")
+		return nil
+	},
+}
+
+// addchangelogCmd represents the addchangelog command
+var addchangelogCmd = &cobra.Command{
+	Use:   "addchangelog",
+	Short: "Add a changelog entry to build.yml",
+	Long:  `Add a changelog entry to an existing build.yml file. The entry will be appended to the end of the changelog list.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		title, _ := cmd.Flags().GetString("title")
+		description, _ := cmd.Flags().GetString("description")
+
+		// Validate required fields
+		if title == "" {
+			return fmt.Errorf("--title flag is required")
+		}
+		if description == "" {
+			return fmt.Errorf("--description flag is required")
+		}
+
+		// Read existing build.yml
+		config, err := ReadYAMLFile("build.yml")
+		if err != nil {
+			return fmt.Errorf("error reading build.yml: %w", err)
+		}
+
+		// Validate spec type
+		if config.Spec != "build" {
+			return fmt.Errorf("invalid spec type '%s' in build.yml, expected 'build'", config.Spec)
+		}
+
+		// Parse the asset to get the build asset
+		assetData, err := yaml.Marshal(config.Asset)
+		if err != nil {
+			return fmt.Errorf("failed to marshal asset: %w", err)
+		}
+
+		var buildAsset BuildAsset
+		if err := yaml.Unmarshal(assetData, &buildAsset); err != nil {
+			return fmt.Errorf("failed to parse build asset: %w", err)
+		}
+
+		// Add new changelog entry
+		newEntry := ChangelogEntry{
+			Title:       title,
+			Description: description,
+		}
+		buildAsset.Changelog = append(buildAsset.Changelog, newEntry)
+
+		// Update config with modified asset
+		config.Asset = buildAsset
+
+		// Write back to build.yml
+		if err := WriteYAMLFile("build.yml", config); err != nil {
+			return fmt.Errorf("error writing build.yml: %w", err)
+		}
+
+		fmt.Println("Successfully added changelog entry to build.yml")
+		return nil
+	},
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.Version = version
@@ -138,14 +250,22 @@ func init() {
 	// Flags for subcommands
 	buildCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
 	addfilesCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
+	genbuildCmd.Flags().String("images", "", "Directory containing images to scan and add (optional)")
+	genbuildCmd.Flags().String("version", "", "Version to set for the build (optional, defaults to 0.0.1)")
+	addchangelogCmd.Flags().String("title", "", "Title for the changelog entry (required)")
+	addchangelogCmd.Flags().String("description", "", "Description for the changelog entry (required)")
 
 	// Mark asset as required for both subcommands
 	buildCmd.MarkFlagRequired("asset")
 	addfilesCmd.MarkFlagRequired("asset")
+	addchangelogCmd.MarkFlagRequired("title")
+	addchangelogCmd.MarkFlagRequired("description")
 
 	// Add subcommands
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(addfilesCmd)
+	rootCmd.AddCommand(genbuildCmd)
+	rootCmd.AddCommand(addchangelogCmd)
 }
 
 // initConfig reads in environment variables and config file if set

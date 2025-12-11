@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ValidateFiles checks if all files in the list exist
@@ -88,4 +89,49 @@ func CalculateSHA256(filePath string) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// ScanImageDirectory scans a directory for image files and returns their paths
+// Supported formats: png, jpg, jpeg, gif, webp, bmp, svg
+func ScanImageDirectory(dirPath string) ([]string, error) {
+	// Validate directory exists
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("directory does not exist: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("path is not a directory: %s", dirPath)
+	}
+
+	var imageFiles []string
+	imageExtensions := map[string]bool{
+		".png":  true,
+		".jpg":  true,
+		".jpeg": true,
+		".gif":  true,
+		".webp": true,
+		".bmp":  true,
+		".svg":  true,
+	}
+
+	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			ext := strings.ToLower(filepath.Ext(path))
+			if imageExtensions[ext] {
+				imageFiles = append(imageFiles, path)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error scanning directory: %w", err)
+	}
+
+	return imageFiles, nil
 }

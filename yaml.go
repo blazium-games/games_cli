@@ -64,20 +64,21 @@ type Config struct {
 	Asset   interface{} `yaml:"asset"`
 }
 
+// ChangelogEntry represents a single changelog entry
+type ChangelogEntry struct {
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
+}
+
 // BuildAsset represents the asset structure for build spec
 type BuildAsset struct {
-	Title       string   `yaml:"title"`
-	Type        string   `yaml:"type"`
-	Description string   `yaml:"description"`
-	Version     string   `yaml:"version"`
-	Video       string   `yaml:"video,omitempty"`
-	Images      []string `yaml:"images,omitempty"`
-	Changelog   []struct {
-		Item struct {
-			Title       string `yaml:"title"`
-			Description string `yaml:"description"`
-		} `yaml:"item"`
-	} `yaml:"changelog,omitempty"`
+	Title       string          `yaml:"title"`
+	Type        string          `yaml:"type"`
+	Description string          `yaml:"description"`
+	Version     string          `yaml:"version"`
+	Video       string          `yaml:"video,omitempty"`
+	Images      []string        `yaml:"images,omitempty"`
+	Changelog   []ChangelogEntry `yaml:"changelog,omitempty"`
 }
 
 // FilesAsset represents the asset structure for addfiles spec
@@ -210,6 +211,35 @@ func ParseYAML(filename string) (*ParsedConfig, error) {
 	}
 
 	return parsed, nil
+}
+
+// ReadYAMLFile reads a YAML file and returns the Config struct
+func ReadYAMLFile(filename string) (*Config, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	return &config, nil
+}
+
+// WriteYAMLFile writes a Config struct to a YAML file
+func WriteYAMLFile(filename string, config *Config) error {
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal YAML: %w", err)
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
 }
 
 // init registers the default v1 parsers

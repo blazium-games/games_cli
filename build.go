@@ -32,8 +32,8 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 		var changelogItems []map[string]string
 		for _, item := range asset.Changelog {
 			changelogItems = append(changelogItems, map[string]string{
-				"title":       item.Item.Title,
-				"description": item.Item.Description,
+				"title":       item.Title,
+				"description": item.Description,
 			})
 		}
 		buildReq["changelog_items"] = changelogItems
