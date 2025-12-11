@@ -135,3 +135,36 @@ func ScanImageDirectory(dirPath string) ([]string, error) {
 
 	return imageFiles, nil
 }
+
+// ScanFileDirectory scans a directory for all files (not just images) and returns their paths
+// Recursively walks the directory and collects all file paths
+func ScanFileDirectory(dirPath string) ([]string, error) {
+	// Validate directory exists
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("directory does not exist: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("path is not a directory: %s", dirPath)
+	}
+
+	var files []string
+
+	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			files = append(files, path)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error scanning directory: %w", err)
+	}
+
+	return files, nil
+}

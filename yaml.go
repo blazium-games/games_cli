@@ -81,16 +81,19 @@ type BuildAsset struct {
 	Changelog   []ChangelogEntry `yaml:"changelog,omitempty"`
 }
 
+// FileEntry represents a single file entry in the files list
+type FileEntry struct {
+	File string `yaml:"file"`
+}
+
 // FilesAsset represents the asset structure for addfiles spec
 type FilesAsset struct {
-	Type    string `yaml:"type"`
-	Version string `yaml:"version"`
-	Channel string `yaml:"channel"`
-	OS      string `yaml:"os"`
-	Arch    string `yaml:"arch"`
-	Files   []struct {
-		File string `yaml:"file"`
-	} `yaml:"files"`
+	Type    string      `yaml:"type"`
+	Version string      `yaml:"version"`
+	Channel string      `yaml:"channel"`
+	OS      string      `yaml:"os"`
+	Arch    string      `yaml:"arch"`
+	Files   []FileEntry `yaml:"files"`
 }
 
 // ParsedConfig holds the parsed configuration with typed asset

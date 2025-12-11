@@ -233,6 +233,76 @@ var addchangelogCmd = &cobra.Command{
 	},
 }
 
+// setfilesCmd represents the setfiles command
+var setfilesCmd = &cobra.Command{
+	Use:   "setfiles",
+	Short: "Generate a new addfiles.yml file",
+	Long:  `Generate a new addfiles.yml file with default values. Optionally scan a directory for files and set various configuration options.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		version, _ := cmd.Flags().GetString("version")
+		channel, _ := cmd.Flags().GetString("channel")
+		osType, _ := cmd.Flags().GetString("os")
+		assetType, _ := cmd.Flags().GetString("type")
+		arch, _ := cmd.Flags().GetString("arch")
+		filesDir, _ := cmd.Flags().GetString("files")
+
+		// Set defaults if not provided
+		if version == "" {
+			version = "0.0.1"
+		}
+		if channel == "" {
+			channel = "stable"
+		}
+		if osType == "" {
+			osType = "windows"
+		}
+		if assetType == "" {
+			assetType = "game"
+		}
+		if arch == "" {
+			arch = "x86_64"
+		}
+
+		// Scan files directory if provided
+		var fileEntries []FileEntry
+		if filesDir != "" {
+			files, err := ScanFileDirectory(filesDir)
+			if err != nil {
+				return fmt.Errorf("error scanning files directory: %w", err)
+			}
+			for _, file := range files {
+				fileEntries = append(fileEntries, FileEntry{File: file})
+			}
+			fmt.Printf("Found %d file(s) in directory\n", len(fileEntries))
+		}
+
+		// Create default files asset
+		filesAsset := FilesAsset{
+			Type:    assetType,
+			Version: version,
+			Channel: channel,
+			OS:      osType,
+			Arch:    arch,
+			Files:   fileEntries,
+		}
+
+		// Create config
+		config := &Config{
+			Version: "v1",
+			Spec:    "addfiles",
+			Asset:   filesAsset,
+		}
+
+		// Write to addfiles.yml
+		if err := WriteYAMLFile("addfiles.yml", config); err != nil {
+			return fmt.Errorf("error writing addfiles.yml: %w", err)
+		}
+
+		fmt.Println("Successfully generated addfiles.yml")
+		return nil
+	},
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.Version = version
@@ -254,6 +324,12 @@ func init() {
 	genbuildCmd.Flags().String("version", "", "Version to set for the build (optional, defaults to 0.0.1)")
 	addchangelogCmd.Flags().String("title", "", "Title for the changelog entry (required)")
 	addchangelogCmd.Flags().String("description", "", "Description for the changelog entry (required)")
+	setfilesCmd.Flags().String("version", "", "Version to set for the files (optional, defaults to 0.0.1)")
+	setfilesCmd.Flags().String("channel", "", "Channel to set (optional, defaults to stable)")
+	setfilesCmd.Flags().String("os", "", "OS to set (optional, defaults to windows)")
+	setfilesCmd.Flags().String("type", "", "Type to set (optional, defaults to game)")
+	setfilesCmd.Flags().String("arch", "", "Architecture to set (optional, defaults to x86_64)")
+	setfilesCmd.Flags().String("files", "", "Directory containing files to scan and add (optional)")
 
 	// Mark asset as required for both subcommands
 	buildCmd.MarkFlagRequired("asset")
@@ -266,6 +342,7 @@ func init() {
 	rootCmd.AddCommand(addfilesCmd)
 	rootCmd.AddCommand(genbuildCmd)
 	rootCmd.AddCommand(addchangelogCmd)
+	rootCmd.AddCommand(setfilesCmd)
 }
 
 // initConfig reads in environment variables and config file if set
