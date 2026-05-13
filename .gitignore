@@ -4,4 +4,8 @@ ignore/
 *.exe
 *.log
 .env
-*.syso
+*.sysodebug.html
+test_failure.png
+playwright-report/
+test-results/
+playwright_logs.txt
