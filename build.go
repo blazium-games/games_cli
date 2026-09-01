@@ -12,52 +12,54 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 	}
 
 	asset := config.BuildAsset
+	platforms := buildPlatforms(asset)
+	var imageBuildID string
 
-	// Prepare build request
-	buildReq := map[string]interface{}{
-		"build":       asset.Type,
-		"type":        asset.Type,
-		"version":     asset.Version,
-		"title":       asset.Title,
-		"description": asset.Description,
-	}
-
-	// Add optional demo_url
-	if asset.Video != "" {
-		buildReq["demo_url"] = asset.Video
-	}
-
-	// Add optional changelog_items
-	if len(asset.Changelog) > 0 {
-		var changelogItems []map[string]string
-		for _, item := range asset.Changelog {
-			changelogItems = append(changelogItems, map[string]string{
-				"title":       item.Title,
-				"description": item.Description,
-			})
+	for _, p := range platforms {
+		buildReq := map[string]interface{}{
+			"build":       asset.Type,
+			"type":        asset.Type,
+			"version":     asset.Version,
+			"title":       asset.Title,
+			"description": asset.Description,
 		}
-		buildReq["changelog_items"] = changelogItems
+		if p.OS != "" {
+			buildReq["os"] = p.OS
+			buildReq["arch"] = p.Arch
+			buildReq["channel"] = p.Channel
+		}
+		if asset.Video != "" {
+			buildReq["demo_url"] = asset.Video
+		}
+		if len(asset.Changelog) > 0 {
+			var changelogItems []map[string]string
+			for _, item := range asset.Changelog {
+				changelogItems = append(changelogItems, map[string]string{
+					"title":       item.Title,
+					"description": item.Description,
+				})
+			}
+			buildReq["changelog_items"] = changelogItems
+		}
+
+		fmt.Println("Uploading build information...")
+		resp, err := client.PostJSON("/tool/upload/build", buildReq)
+		if err != nil {
+			return fmt.Errorf("failed to upload build: %w", err)
+		}
+		buildUID := responseBuildID(resp.Data)
+		if buildUID == "" {
+			return fmt.Errorf("build_id not found in response")
+		}
+		printBuildIDs(resp.Data, p)
+		if imageBuildID == "" {
+			imageBuildID = buildUID
+		}
 	}
 
-	// POST to /tool/upload/build
-	fmt.Println("Uploading build information...")
-	resp, err := client.PostJSON("/tool/upload/build", buildReq)
-	if err != nil {
-		return fmt.Errorf("failed to upload build: %w", err)
-	}
-
-	// Extract build_uid from response
-	buildUID, ok := resp.Data["build_uid"].(string)
-	if !ok {
-		return fmt.Errorf("build_uid not found in response")
-	}
-
-	fmt.Printf("Build uploaded successfully. Build UID: %s\n", buildUID)
-
-	// Upload images if provided
 	if len(asset.Images) > 0 {
 		fmt.Println("Uploading images...")
-		if err := uploadImages(client, buildUID, asset.Images); err != nil {
+		if err := uploadImages(client, imageBuildID, asset.Images); err != nil {
 			return fmt.Errorf("failed to upload images: %w", err)
 		}
 		fmt.Printf("Successfully uploaded %d image(s)\n", len(asset.Images))

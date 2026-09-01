@@ -5,6 +5,7 @@ asset:
     version: 0.0.1
     channel: "stable"
     os: "windows"
+    arch: "x86_64"
     files:
         - file: ./dir/file.exe
         - file: ./dir/license.txt

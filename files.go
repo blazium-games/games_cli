@@ -54,34 +54,54 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 	}
 	fileSize := fileInfo.Size()
 
-	// Prepare form data
+	platform := PlatformSpec{OS: asset.OS, Arch: asset.Arch, Channel: asset.Channel}
+	if platform.Channel == "" {
+		platform.Channel = "stable"
+	}
+	title := asset.Version + " " + asset.OS + "/" + asset.Arch
+	fmt.Println("Creating platform build...")
+	buildResp, err := client.PostJSON("/tool/upload/build", map[string]interface{}{
+		"build":       asset.Type,
+		"type":        asset.Type,
+		"version":     asset.Version,
+		"os":          asset.OS,
+		"arch":        asset.Arch,
+		"channel":     platform.Channel,
+		"title":       title,
+		"description": title,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create platform build: %w", err)
+	}
+	buildID := responseBuildID(buildResp.Data)
+	if buildID == "" {
+		return fmt.Errorf("build_id not found in response")
+	}
+	printBuildIDs(buildResp.Data, platform)
+
 	formData := map[string]string{
-		"build":    asset.Type,
-		"type":     asset.Type,
-		"version":  asset.Version,
-		"channel":  asset.Channel,
-		"os":       asset.OS,
-		"arch":     asset.Arch,
-		"checksum": checksum,
+		"build_uid": buildID,
+		"build":     asset.Type,
+		"type":      asset.Type,
+		"version":   asset.Version,
+		"channel":   platform.Channel,
+		"os":        asset.OS,
+		"arch":      asset.Arch,
+		"checksum":  checksum,
 	}
 
-	// Upload file
 	fmt.Println("Uploading file...")
 	files := map[string]string{
 		"file": tempZip,
 	}
 
-	// Initial upload without session ID (server will provide one)
-	resp, sessionID, err := client.PostMultipart("https://uploader.blazium.online/api/v1/tool/upload/files", formData, files, nil)
+	resp, sessionID, err := client.PostMultipart("/tool/upload/files", formData, files, nil)
 	if err != nil {
 		return fmt.Errorf("initial upload failed: %w", err)
 	}
 
-	// Check if upload is complete or needs resume
 	if isUploadComplete(resp) {
-		fileUID, _ := resp.Data["file_uid"].(string)
-		status, _ := resp.Data["status"].(string)
-		fmt.Printf("File uploaded successfully. File UID: %s, Status: %s\n", fileUID, status)
+		printFileUploadResult(resp.Data, platform)
 		return nil
 	}
 
@@ -112,7 +132,7 @@ func uploadFileWithResume(client *Client, filePath string, formData map[string]s
 	for {
 		// Try uploading from current position
 		resp, newSessionID, err := client.PostMultipartResume(
-			"https://uploader.blazium.online/api/v1/tool/upload/files",
+			"/tool/upload/files",
 			formData,
 			filePath,
 			uploadedBytes,
@@ -137,9 +157,7 @@ func uploadFileWithResume(client *Client, filePath string, formData map[string]s
 
 		// Check if upload is complete
 		if isUploadComplete(resp) {
-			fileUID, _ := resp.Data["file_uid"].(string)
-			status, _ := resp.Data["status"].(string)
-			fmt.Printf("  Upload complete! File UID: %s, Status: %s\n", fileUID, status)
+			printFileUploadResult(resp.Data, PlatformSpec{})
 			return nil
 		}
 
@@ -221,4 +239,13 @@ func isRetryableError(err error) bool {
 		return true
 	}
 	return false
+}
+
+func printFileUploadResult(data map[string]interface{}, p PlatformSpec) {
+	fileUID, _ := data["file_uid"].(string)
+	status, _ := data["status"].(string)
+	fmt.Printf("File uploaded successfully. File UID: %s, Status: %s\n", fileUID, status)
+	if responseBuildID(data) != "" {
+		printBuildIDs(data, p)
+	}
 }

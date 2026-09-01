@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultAPIURL = "https://api.blazium.online/api/v1"
+const defaultAPIURL = "https://api.blazium.games/api/v1"
 
 var version = "dev"
 
@@ -53,15 +53,27 @@ var buildCmd = &cobra.Command{
 		// Create HTTP client
 		client := NewClient(apiURL, accessToken, secretKey)
 
-		// Parse YAML file
 		config, err := ParseYAML(assetFile)
 		if err != nil {
 			return fmt.Errorf("error parsing YAML file: %w", err)
 		}
-
-		// Validate spec type
 		if config.Spec != "build" {
 			return fmt.Errorf("invalid spec type '%s' in YAML file, expected 'build'", config.Spec)
+		}
+		osFlag, _ := cmd.Flags().GetString("os")
+		archFlag, _ := cmd.Flags().GetString("arch")
+		channelFlag, _ := cmd.Flags().GetString("channel")
+		if osFlag != "" || archFlag != "" || channelFlag != "" {
+			config.BuildAsset.Platforms = nil
+			if osFlag != "" {
+				config.BuildAsset.OS = osFlag
+			}
+			if archFlag != "" {
+				config.BuildAsset.Arch = archFlag
+			}
+			if channelFlag != "" {
+				config.BuildAsset.Channel = channelFlag
+			}
 		}
 
 		// Process build
@@ -110,6 +122,15 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 		// Validate spec type
 		if config.Spec != "addfiles" {
 			return fmt.Errorf("invalid spec type '%s' in YAML file, expected 'addfiles'", config.Spec)
+		}
+		if osFlag, _ := cmd.Flags().GetString("os"); osFlag != "" {
+			config.FilesAsset.OS = osFlag
+		}
+		if archFlag, _ := cmd.Flags().GetString("arch"); archFlag != "" {
+			config.FilesAsset.Arch = archFlag
+		}
+		if channelFlag, _ := cmd.Flags().GetString("channel"); channelFlag != "" {
+			config.FilesAsset.Channel = channelFlag
 		}
 
 		// Process files
@@ -319,7 +340,13 @@ func init() {
 
 	// Flags for subcommands
 	buildCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
+	buildCmd.Flags().String("os", "", "OS for this build_id (windows, linux, macos). Overrides YAML; use in CI matrices.")
+	buildCmd.Flags().String("arch", "", "Arch for this build_id (x86_64, arm64). Overrides YAML.")
+	buildCmd.Flags().String("channel", "", "Channel for this build_id (stable, beta). Overrides YAML.")
 	addfilesCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
+	addfilesCmd.Flags().String("os", "", "OS for this build_id. Overrides YAML.")
+	addfilesCmd.Flags().String("arch", "", "Arch for this build_id. Overrides YAML.")
+	addfilesCmd.Flags().String("channel", "", "Channel for this build_id. Overrides YAML.")
 	genbuildCmd.Flags().String("images", "", "Directory containing images to scan and add (optional)")
 	genbuildCmd.Flags().String("version", "", "Version to set for the build (optional, defaults to 0.0.1)")
 	addchangelogCmd.Flags().String("title", "", "Title for the changelog entry (required)")
