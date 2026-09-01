@@ -10,6 +10,7 @@ import (
 )
 
 const defaultAPIURL = "https://api.blazium.games/api/v1"
+const defaultUploadURL = "https://upload.blazium.games/api/v1"
 
 var version = "dev"
 
@@ -50,8 +51,8 @@ var buildCmd = &cobra.Command{
 			return fmt.Errorf("secret key is required (use --secret flag or set BLAZIUM_SECRET_KEY env var)")
 		}
 
-		// Create HTTP client
 		client := NewClient(apiURL, accessToken, secretKey)
+		client.SetUploadURL(viper.GetString("upload"))
 
 		config, err := ParseYAML(assetFile)
 		if err != nil {
@@ -110,10 +111,9 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 			return fmt.Errorf("secret key is required (use --secret flag or set BLAZIUM_SECRET_KEY env var)")
 		}
 
-		// Create HTTP client
 		client := NewClient(apiURL, accessToken, secretKey)
+		client.SetUploadURL(viper.GetString("upload"))
 
-		// Parse YAML file
 		config, err := ParseYAML(assetFile)
 		if err != nil {
 			return fmt.Errorf("error parsing YAML file: %w", err)
@@ -332,11 +332,12 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&accessToken, "access", "", "", "Blazium access token (overrides BLAZIUM_ACCESS_TOKEN env var)")
 	rootCmd.PersistentFlags().StringVarP(&secretKey, "secret", "", "", "Blazium secret key (overrides BLAZIUM_SECRET_KEY env var)")
 	rootCmd.PersistentFlags().StringVarP(&apiURL, "url", "", defaultAPIURL, "API base URL (overrides BLAZIUM_API_URL env var)")
+	rootCmd.PersistentFlags().String("upload", defaultUploadURL, "Upload service base URL (overrides BLAZIUM_UPLOAD_URL env var)")
 
-	// Bind flags to Viper
 	viper.BindPFlag("access", rootCmd.PersistentFlags().Lookup("access"))
 	viper.BindPFlag("secret", rootCmd.PersistentFlags().Lookup("secret"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
+	viper.BindPFlag("upload", rootCmd.PersistentFlags().Lookup("upload"))
 
 	// Flags for subcommands
 	buildCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
@@ -381,9 +382,10 @@ func initConfig() {
 	viper.BindEnv("access", "BLAZIUM_ACCESS_TOKEN")
 	viper.BindEnv("secret", "BLAZIUM_SECRET_KEY")
 	viper.BindEnv("url", "BLAZIUM_API_URL")
+	viper.BindEnv("upload", "BLAZIUM_UPLOAD_URL")
 
-	// Set default for URL
 	viper.SetDefault("url", defaultAPIURL)
+	viper.SetDefault("upload", defaultUploadURL)
 
 	// Read environment variables
 	viper.AutomaticEnv()

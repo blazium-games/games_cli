@@ -16,9 +16,13 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 	var imageBuildID string
 
 	for _, p := range platforms {
+		display := asset.Title
+		if display == "" {
+			display = asset.Version
+		}
 		buildReq := map[string]interface{}{
-			"build":       asset.Type,
-			"type":        asset.Type,
+			"build":       display,
+			"build_type":  asset.Type,
 			"version":     asset.Version,
 			"title":       asset.Title,
 			"description": asset.Description,
@@ -79,7 +83,7 @@ func uploadImages(client *Client, buildUID string, imagePaths []string) error {
 
 	// Upload all images in a single request (server expects multiple "image" fields)
 	formData := map[string]string{
-		"build_uid": buildUID,
+		"build_id": buildUID,
 	}
 
 	// Upload all images at once using the same field name

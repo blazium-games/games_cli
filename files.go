@@ -61,8 +61,8 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 	title := asset.Version + " " + asset.OS + "/" + asset.Arch
 	fmt.Println("Creating platform build...")
 	buildResp, err := client.PostJSON("/tool/upload/build", map[string]interface{}{
-		"build":       asset.Type,
-		"type":        asset.Type,
+		"build":       title,
+		"build_type":  asset.Type,
 		"version":     asset.Version,
 		"os":          asset.OS,
 		"arch":        asset.Arch,
@@ -80,14 +80,14 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 	printBuildIDs(buildResp.Data, platform)
 
 	formData := map[string]string{
-		"build_uid": buildID,
-		"build":     asset.Type,
-		"type":      asset.Type,
-		"version":   asset.Version,
-		"channel":   platform.Channel,
-		"os":        asset.OS,
-		"arch":      asset.Arch,
-		"checksum":  checksum,
+		"build_id":   buildID,
+		"build":      title,
+		"build_type": asset.Type,
+		"version":    asset.Version,
+		"channel":    platform.Channel,
+		"os":         asset.OS,
+		"arch":       asset.Arch,
+		"checksum":   checksum,
 	}
 
 	fmt.Println("Uploading file...")
@@ -95,7 +95,7 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 		"file": tempZip,
 	}
 
-	resp, sessionID, err := client.PostMultipart("/tool/upload/files", formData, files, nil)
+	resp, sessionID, err := client.PostMultipart(client.filesURL("/tool/upload/files"), formData, files, nil)
 	if err != nil {
 		return fmt.Errorf("initial upload failed: %w", err)
 	}
@@ -132,7 +132,7 @@ func uploadFileWithResume(client *Client, filePath string, formData map[string]s
 	for {
 		// Try uploading from current position
 		resp, newSessionID, err := client.PostMultipartResume(
-			"/tool/upload/files",
+			client.filesURL("/tool/upload/files"),
 			formData,
 			filePath,
 			uploadedBytes,
