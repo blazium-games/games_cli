@@ -24,8 +24,8 @@ var (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "chauffeur",
-	Short: "Chauffeur CLI for uploading builds and files",
-	Long:  `Chauffeur uploads game builds and files to the Blazium games service.`,
+	Short: "Deprecated: use blazium-cli games (formerly chauffeur)",
+	Long:  `Deprecated. Use blazium-cli games build|addfiles|genbuild|addchangelog|setfiles. This chauffeur binary is a compatibility alias only.`,
 }
 
 // buildCmd represents the build command
