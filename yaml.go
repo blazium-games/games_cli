@@ -72,12 +72,17 @@ type ChangelogEntry struct {
 
 // BuildAsset represents the asset structure for build spec
 type BuildAsset struct {
-	Title       string          `yaml:"title"`
-	Type        string          `yaml:"type"`
-	Description string          `yaml:"description"`
-	Version     string          `yaml:"version"`
-	Video       string          `yaml:"video,omitempty"`
-	Images      []string        `yaml:"images,omitempty"`
+	Title       string           `yaml:"title"`
+	Type        string           `yaml:"type"`
+	AssetType   string           `yaml:"asset_type,omitempty"`
+	Description string           `yaml:"description"`
+	Version     string           `yaml:"version"`
+	OS          string           `yaml:"os,omitempty"`
+	Arch        string           `yaml:"arch,omitempty"`
+	Channel     string           `yaml:"channel,omitempty"`
+	Platforms   []PlatformSpec   `yaml:"platforms,omitempty"`
+	Video       string           `yaml:"video,omitempty"`
+	Images      []string         `yaml:"images,omitempty"`
 	Changelog   []ChangelogEntry `yaml:"changelog,omitempty"`
 }
 
@@ -88,8 +93,9 @@ type FileEntry struct {
 
 // FilesAsset represents the asset structure for addfiles spec
 type FilesAsset struct {
-	Type    string      `yaml:"type"`
-	Version string      `yaml:"version"`
+	Type      string      `yaml:"type"`
+	AssetType string      `yaml:"asset_type,omitempty"`
+	Version   string      `yaml:"version"`
 	Channel string      `yaml:"channel"`
 	OS      string      `yaml:"os"`
 	Arch    string      `yaml:"arch"`
@@ -128,6 +134,9 @@ func (p *BuildV1Parser) ParseAsset(asset interface{}) (*ParsedConfig, error) {
 		return nil, fmt.Errorf("missing required field: asset.title")
 	}
 	if buildAsset.Type == "" {
+		buildAsset.Type = buildAsset.AssetType
+	}
+	if buildAsset.Type == "" {
 		return nil, fmt.Errorf("missing required field: asset.type")
 	}
 	if buildAsset.Description == "" {
@@ -161,6 +170,9 @@ func (p *AddFilesV1Parser) ParseAsset(asset interface{}) (*ParsedConfig, error) 
 	}
 
 	// Validate required fields
+	if filesAsset.Type == "" {
+		filesAsset.Type = filesAsset.AssetType
+	}
 	if filesAsset.Type == "" {
 		return nil, fmt.Errorf("missing required field: asset.type")
 	}

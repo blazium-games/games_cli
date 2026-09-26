@@ -15,6 +15,7 @@ import (
 // Client wraps HTTP client with authentication
 type Client struct {
 	baseURL     string
+	uploadURL   string
 	accessToken string
 	secretKey   string
 	httpClient  *http.Client
@@ -28,6 +29,21 @@ func NewClient(baseURL, accessToken, secretKey string) *Client {
 		secretKey:   secretKey,
 		httpClient:  &http.Client{},
 	}
+}
+
+func (c *Client) SetUploadURL(uploadURL string) {
+	c.uploadURL = strings.TrimRight(strings.TrimSpace(uploadURL), "/")
+}
+
+func (c *Client) filesURL(path string) string {
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	base := c.uploadURL
+	if base == "" {
+		base = c.baseURL
+	}
+	return strings.TrimRight(base, "/") + path
 }
 
 // buildURL constructs the full URL from baseURL and endpoint

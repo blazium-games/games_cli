@@ -10,6 +10,7 @@ import (
 )
 
 const defaultAPIURL = "https://api.blazium.online/api/v1"
+const defaultUploadURL = "https://uploader.blazium.online/api/v1"
 
 var version = "dev"
 
@@ -23,8 +24,8 @@ var (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "chauffeur",
-	Short: "Chauffeur CLI for uploading builds and files",
-	Long:  `Chauffeur uploads game builds and files to the Blazium games service.`,
+	Short: "Deprecated: use blazium-cli games (formerly chauffeur)",
+	Long:  `Deprecated. Use blazium-cli games build|addfiles|genbuild|addchangelog|setfiles. This chauffeur binary is a compatibility alias only.`,
 }
 
 // buildCmd represents the build command
@@ -50,18 +51,30 @@ var buildCmd = &cobra.Command{
 			return fmt.Errorf("secret key is required (use --secret flag or set BLAZIUM_SECRET_KEY env var)")
 		}
 
-		// Create HTTP client
 		client := NewClient(apiURL, accessToken, secretKey)
+		client.SetUploadURL(viper.GetString("upload"))
 
-		// Parse YAML file
 		config, err := ParseYAML(assetFile)
 		if err != nil {
 			return fmt.Errorf("error parsing YAML file: %w", err)
 		}
-
-		// Validate spec type
 		if config.Spec != "build" {
 			return fmt.Errorf("invalid spec type '%s' in YAML file, expected 'build'", config.Spec)
+		}
+		osFlag, _ := cmd.Flags().GetString("os")
+		archFlag, _ := cmd.Flags().GetString("arch")
+		channelFlag, _ := cmd.Flags().GetString("channel")
+		if osFlag != "" || archFlag != "" || channelFlag != "" {
+			config.BuildAsset.Platforms = nil
+			if osFlag != "" {
+				config.BuildAsset.OS = osFlag
+			}
+			if archFlag != "" {
+				config.BuildAsset.Arch = archFlag
+			}
+			if channelFlag != "" {
+				config.BuildAsset.Channel = channelFlag
+			}
 		}
 
 		// Process build
@@ -98,10 +111,9 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 			return fmt.Errorf("secret key is required (use --secret flag or set BLAZIUM_SECRET_KEY env var)")
 		}
 
-		// Create HTTP client
 		client := NewClient(apiURL, accessToken, secretKey)
+		client.SetUploadURL(viper.GetString("upload"))
 
-		// Parse YAML file
 		config, err := ParseYAML(assetFile)
 		if err != nil {
 			return fmt.Errorf("error parsing YAML file: %w", err)
@@ -110,6 +122,15 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 		// Validate spec type
 		if config.Spec != "addfiles" {
 			return fmt.Errorf("invalid spec type '%s' in YAML file, expected 'addfiles'", config.Spec)
+		}
+		if osFlag, _ := cmd.Flags().GetString("os"); osFlag != "" {
+			config.FilesAsset.OS = osFlag
+		}
+		if archFlag, _ := cmd.Flags().GetString("arch"); archFlag != "" {
+			config.FilesAsset.Arch = archFlag
+		}
+		if channelFlag, _ := cmd.Flags().GetString("channel"); channelFlag != "" {
+			config.FilesAsset.Channel = channelFlag
 		}
 
 		// Process files
@@ -311,15 +332,22 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&accessToken, "access", "", "", "Blazium access token (overrides BLAZIUM_ACCESS_TOKEN env var)")
 	rootCmd.PersistentFlags().StringVarP(&secretKey, "secret", "", "", "Blazium secret key (overrides BLAZIUM_SECRET_KEY env var)")
 	rootCmd.PersistentFlags().StringVarP(&apiURL, "url", "", defaultAPIURL, "API base URL (overrides BLAZIUM_API_URL env var)")
+	rootCmd.PersistentFlags().String("upload", defaultUploadURL, "Upload service base URL (overrides BLAZIUM_UPLOAD_URL env var)")
 
-	// Bind flags to Viper
 	viper.BindPFlag("access", rootCmd.PersistentFlags().Lookup("access"))
 	viper.BindPFlag("secret", rootCmd.PersistentFlags().Lookup("secret"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
+	viper.BindPFlag("upload", rootCmd.PersistentFlags().Lookup("upload"))
 
 	// Flags for subcommands
 	buildCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
+	buildCmd.Flags().String("os", "", "OS for this build_id (windows, linux, macos). Overrides YAML; use in CI matrices.")
+	buildCmd.Flags().String("arch", "", "Arch for this build_id (x86_64, arm64). Overrides YAML.")
+	buildCmd.Flags().String("channel", "", "Channel for this build_id (stable, beta). Overrides YAML.")
 	addfilesCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
+	addfilesCmd.Flags().String("os", "", "OS for this build_id. Overrides YAML.")
+	addfilesCmd.Flags().String("arch", "", "Arch for this build_id. Overrides YAML.")
+	addfilesCmd.Flags().String("channel", "", "Channel for this build_id. Overrides YAML.")
 	genbuildCmd.Flags().String("images", "", "Directory containing images to scan and add (optional)")
 	genbuildCmd.Flags().String("version", "", "Version to set for the build (optional, defaults to 0.0.1)")
 	addchangelogCmd.Flags().String("title", "", "Title for the changelog entry (required)")
@@ -354,9 +382,10 @@ func initConfig() {
 	viper.BindEnv("access", "BLAZIUM_ACCESS_TOKEN")
 	viper.BindEnv("secret", "BLAZIUM_SECRET_KEY")
 	viper.BindEnv("url", "BLAZIUM_API_URL")
+	viper.BindEnv("upload", "BLAZIUM_UPLOAD_URL")
 
-	// Set default for URL
 	viper.SetDefault("url", defaultAPIURL)
+	viper.SetDefault("upload", defaultUploadURL)
 
 	// Read environment variables
 	viper.AutomaticEnv()
