@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultAPIURL = "https://api.blazium.games/api/v1"
-const defaultUploadURL = "https://upload.blazium.games/api/v1"
+const defaultAPIURL = "https://api.blazium.online/api/v1"
+const defaultUploadURL = "https://uploader.blazium.online/api/v1"
 
 var version = "dev"
 
