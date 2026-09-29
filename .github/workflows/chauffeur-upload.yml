@@ -5,26 +5,48 @@ on:
     branches:
       - main
       - master
+  pull_request:
 
 env:
   TOOL_NAME: chauffeur
 
+permissions:
+  contents: read
+
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+
   build-and-upload:
-    runs-on: ${{ matrix.os }}
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             arch: amd64
-          - os: windows-latest
-            goos: windows
+          - goos: linux
+            arch: arm64
+          - goos: windows
             arch: amd64
-
-    permissions:
-      contents: read
+          - goos: darwin
+            arch: amd64
+          - goos: darwin
+            arch: arm64
 
     steps:
       - name: Checkout
@@ -33,7 +55,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version-file: go.mod
           cache: true
 
       - name: Generate Semver/w Build SHA
@@ -42,20 +64,10 @@ jobs:
         with:
           personal_github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Write VERSION (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
+      - name: Write VERSION
         run: echo "${{ steps.semver.outputs.revision_version }}" > VERSION
 
-      - name: Write VERSION (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Set-Content -Path "VERSION" -Value "${{ steps.semver.outputs.revision_version }}"
-
-      - name: Write .env from secret (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
+      - name: Write .env from secret
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
@@ -65,290 +77,66 @@ jobs:
           fi
           printf "%s" "$ENV_FILE" > .env
 
-      - name: Write .env from secret (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          ENV_FILE: ${{ secrets.ENV_FILE }}
-        run: |
-          if (-not $Env:ENV_FILE) {
-            Write-Error "ENV_FILE secret is missing"
-          }
-          Set-Content -Path ".env" -Value $Env:ENV_FILE
+      - name: Build upload helper (host)
+        run: go build -o dist/host/upload ./cmd/upload
 
-      - name: Install go-winres (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Generate Windows resources
+        if: matrix.goos == 'windows'
+        env:
+          VERSION: ${{ steps.semver.outputs.revision_version }}
         run: |
+          set -euo pipefail
           go install github.com/tc-hib/go-winres@latest
+          core="${VERSION%%-*}"
+          IFS=. read -r major minor patch _ <<< "${core}.0.0.0"
+          build=0
+          if [ "$VERSION" != "$core" ]; then
+            build="$(printf '%s' "${VERSION#*-}" | tr -cd '0-9')"
+          fi
+          ver="${major:-1}.${minor:-0}.${patch:-0}.${build:-0}"
+          go-winres make --in winres/chauffeur.json --out . --product-version "$ver" --file-version "$ver"
 
-      - name: Generate Windows resources for chauffeur (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-        run: |
-          # Parse version into major.minor.patch.build format
-          $versionParts = $Env:VERSION -split '\.'
-          $major = if ($versionParts.Length -gt 0) { $versionParts[0] } else { "1" }
-          $minor = if ($versionParts.Length -gt 1) { $versionParts[1] } else { "0" }
-          $patch = if ($versionParts.Length -gt 2) { $versionParts[2] -split '-' | Select-Object -First 1 } else { "0" }
-          $build = if ($versionParts.Length -gt 2) { ($versionParts[2] -split '-')[1] -replace '[^0-9]', '' } else { "0" }
-          if ([string]::IsNullOrEmpty($build)) { $build = "0" }
-          
-          # Generate resource file for chauffeur
-          go-winres make --in winres/chauffeur.json --out . --product-version "$major.$minor.$patch.$build" --file-version "$major.$minor.$patch.$build"
-
-      - name: Generate Windows resources for upload tool (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-        run: |
-          # Parse version into major.minor.patch.build format
-          $versionParts = $Env:VERSION -split '\.'
-          $major = if ($versionParts.Length -gt 0) { $versionParts[0] } else { "1" }
-          $minor = if ($versionParts.Length -gt 1) { $versionParts[1] } else { "0" }
-          $patch = if ($versionParts.Length -gt 2) { $versionParts[2] -split '-' | Select-Object -First 1 } else { "0" }
-          $build = if ($versionParts.Length -gt 2) { ($versionParts[2] -split '-')[1] -replace '[^0-9]', '' } else { "0" }
-          if ([string]::IsNullOrEmpty($build)) { $build = "0" }
-          
-          # Generate resource file for upload tool (in cmd/upload directory)
-          Push-Location cmd/upload
-          go-winres make --in ../../winres/upload.json --out . --product-version "$major.$minor.$patch.$build" --file-version "$major.$minor.$patch.$build"
-          Pop-Location
-
-      - name: Build chauffeur CLI (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
+      - name: Build chauffeur
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
           set -euo pipefail
+          ext=""
+          [ "$GOOS" = "windows" ] && ext=".exe"
           mkdir -p "dist/${GOOS}-${GOARCH}"
-          go build -ldflags "-X main.version=${{ steps.semver.outputs.revision_version }}" -o "dist/${GOOS}-${GOARCH}/chauffeur" .
+          go build -trimpath -ldflags "-s -w -X main.version=${{ steps.semver.outputs.revision_version }}" \
+            -o "dist/${GOOS}-${GOARCH}/chauffeur${ext}" .
 
-      - name: Build chauffeur CLI (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
-        run: |
-          New-Item -ItemType Directory -Force -Path "dist/${{ matrix.goos }}-${{ matrix.arch }}" | Out-Null
-          go build -ldflags "-X main.version=${{ steps.semver.outputs.revision_version }}" -o "dist/${{ matrix.goos }}-${{ matrix.arch }}/chauffeur.exe" .
-
-      - name: Build upload tool (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
-        run: |
-          set -euo pipefail
-          go build -o "dist/${GOOS}-${GOARCH}/upload" ./cmd/upload
-
-      - name: Build upload tool (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
-        run: |
-          go build -o "dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe" ./cmd/upload
-
-      - name: Package archive (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
+      - name: Package archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
           VERSION: ${{ steps.semver.outputs.revision_version }}
         run: |
           set -euo pipefail
+          bin="chauffeur"
+          [ "$GOOS" = "windows" ] && bin="chauffeur.exe"
           pkg_root="artifacts/${TOOL_NAME}/${GOOS}-${GOARCH}/${VERSION}"
           mkdir -p "$pkg_root/archive"
-          cp "dist/${GOOS}-${GOARCH}/chauffeur" "$pkg_root/chauffeur"
+          cp "dist/${GOOS}-${GOARCH}/${bin}" "$pkg_root/${bin}"
           cp VERSION "$pkg_root/VERSION"
-          (cd "$pkg_root" && zip -j "archive/default.zip" "chauffeur" "VERSION")
+          (cd "$pkg_root" && zip -j "archive/default.zip" "${bin}" "VERSION")
           mv "$pkg_root/archive/default.zip" "$pkg_root/archive/default"
 
-      - name: Package archive (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-        run: |
-          $pkgRoot = "artifacts/${{ env.TOOL_NAME }}/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION"
-          New-Item -ItemType Directory -Force -Path "$pkgRoot/archive" | Out-Null
-          Copy-Item "dist/${{ matrix.goos }}-${{ matrix.arch }}/chauffeur.exe" "$pkgRoot/chauffeur.exe" -Force
-          Copy-Item "VERSION" "$pkgRoot/VERSION" -Force
-          Compress-Archive -Path "$pkgRoot/chauffeur.exe","$pkgRoot/VERSION" -DestinationPath "$pkgRoot/archive/default.zip" -Force
-          Rename-Item "$pkgRoot/archive/default.zip" "default"
-
-      - name: Package upload tool archive (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
+      - name: Upload archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
           VERSION: ${{ steps.semver.outputs.revision_version }}
         run: |
           set -euo pipefail
-          pkg_root="artifacts/upload/${GOOS}-${GOARCH}/${VERSION}"
-          mkdir -p "$pkg_root/archive"
-          cp "dist/${GOOS}-${GOARCH}/upload" "$pkg_root/upload"
-          cp VERSION "$pkg_root/VERSION"
-          (cd "$pkg_root" && zip -j "archive/default.zip" "upload" "VERSION")
-          mv "$pkg_root/archive/default.zip" "$pkg_root/archive/default"
-
-      - name: Package upload tool archive (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-        run: |
-          $pkgRoot = "artifacts/upload/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION"
-          New-Item -ItemType Directory -Force -Path "$pkgRoot/archive" | Out-Null
-          Copy-Item "dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe" "$pkgRoot/upload.exe" -Force
-          Copy-Item "VERSION" "$pkgRoot/VERSION" -Force
-          Compress-Archive -Path "$pkgRoot/upload.exe","$pkgRoot/VERSION" -DestinationPath "$pkgRoot/archive/default.zip" -Force
-          Rename-Item "$pkgRoot/archive/default.zip" "default"
-
-      - name: Upload archive (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/${{ steps.semver.outputs.revision_version }}/archive/
-        run: |
-          set -euo pipefail
-          ./dist/${GOOS}-${GOARCH}/upload \
-            --file "artifacts/${TOOL_NAME}/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
-            --path "$UPLOAD_PATH" \
-            --acl public-read \
-            --storage STANDARD
-
-      - name: Upload archive (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/${{ steps.semver.outputs.revision_version }}/archive/
-        run: |
-          $archivePath = "artifacts/${{ env.TOOL_NAME }}/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
-          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
-            --file $archivePath `
-            --path $Env:UPLOAD_PATH `
-            --acl public-read `
-            --storage STANDARD
-
-      - name: Upload archive to latest (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
-        run: |
-          set -euo pipefail
-          ./dist/${GOOS}-${GOARCH}/upload \
-            --file "artifacts/${TOOL_NAME}/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
-            --path "$UPLOAD_PATH" \
-            --acl public-read \
-            --storage STANDARD
-
-      - name: Upload archive to latest (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/${{ env.TOOL_NAME }}/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
-        run: |
-          $archivePath = "artifacts/${{ env.TOOL_NAME }}/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
-          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
-            --file $archivePath `
-            --path $Env:UPLOAD_PATH `
-            --acl public-read `
-            --storage STANDARD
-
-      - name: Upload upload tool archive (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/${{ steps.semver.outputs.revision_version }}/archive/
-        run: |
-          set -euo pipefail
-          ./dist/${GOOS}-${GOARCH}/upload \
-            --file "artifacts/upload/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
-            --path "$UPLOAD_PATH" \
-            --acl public-read \
-            --storage STANDARD
-
-      - name: Upload upload tool archive (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/${{ steps.semver.outputs.revision_version }}/archive/
-        run: |
-          $archivePath = "artifacts/upload/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
-          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
-            --file $archivePath `
-            --path $Env:UPLOAD_PATH `
-            --acl public-read `
-            --storage STANDARD
-
-      - name: Upload upload tool archive to latest (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
-        run: |
-          set -euo pipefail
-          ./dist/${GOOS}-${GOARCH}/upload \
-            --file "artifacts/upload/${GOOS}-${GOARCH}/${VERSION}/archive/default" \
-            --path "$UPLOAD_PATH" \
-            --acl public-read \
-            --storage STANDARD
-
-      - name: Upload upload tool archive to latest (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
-          UPLOAD_PATH: tools/upload/${{ matrix.goos }}-${{ matrix.arch }}/latest/archive/
-        run: |
-          $archivePath = "artifacts/upload/$($Env:GOOS)-$($Env:GOARCH)/$Env:VERSION/archive/default"
-          ./dist/${{ matrix.goos }}-${{ matrix.arch }}/upload.exe `
-            --file $archivePath `
-            --path $Env:UPLOAD_PATH `
-            --acl public-read `
-            --storage STANDARD
-
+          archive="artifacts/${TOOL_NAME}/${GOOS}-${GOARCH}/${VERSION}/archive/default"
+          for dest in "${VERSION}" latest; do
+            ./dist/host/upload \
+              --file "$archive" \
+              --path "tools/${TOOL_NAME}/${GOOS}-${GOARCH}/${dest}/archive/" \
+              --acl public-read \
+              --storage STANDARD
+          done

@@ -24,264 +24,249 @@ var (
 	assetFile   string
 )
 
-// rootCmd represents the base command when called without any subcommands
+const authHelp = `Authentication uses the game's deploy key, issued on the game's dashboard
+(or through MCP request_deploy_key):
+
+  BLAZIUM_ACCESS_TOKEN   access token (or --access)
+  BLAZIUM_SECRET_KEY     secret key (or --secret-stdin; avoid --secret)
+
+Issuing a new deploy key invalidates the previous one.`
+
 var rootCmd = &cobra.Command{
 	Use:   "chauffeur",
-	Short: "Deprecated: use blazium-cli games (formerly chauffeur)",
-	Long:  `Deprecated. Use blazium-cli games build|addfiles|genbuild|addchangelog|setfiles. This chauffeur binary is a compatibility alias only.`,
+	Short: "Upload builds, symbols and store images to Blazium Games",
+	Long: `chauffeur is the Blazium Games upload tool. Everything that sends files to the
+store goes through it: builds, per-platform files, Breakpad symbols and store
+page images. The website and MCP can view and delete these, but not upload.
+
+` + authHelp + `
+
+Exit codes: 0 success, 1 usage or validation error, 2 API error, 3 network
+error after retries. With --json, the result (or error) is one JSON object on
+stdout and progress goes to stderr.
+
+Docs: https://blazium-games.github.io/games_docs/docs/cli`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
-// buildCmd represents the build command
+const platformFlagHelp = "\n\nPlatform values:\n  os       " + "windows, macos, linux, android, ios, web" +
+	"\n  arch     x86_64, x86, arm64, arm32, arm, universal, wasm32, wasm" +
+	"\n  channel  1-32 lowercase letters, digits, - or _ (default stable)"
+
 var buildCmd = &cobra.Command{
-	Use:   "build",
-	Short: "Upload a build using a YAML configuration file",
-	Long:  `Upload a build to the Blazium service using a YAML configuration file. The YAML file must have spec: "build" and contain build asset information.`,
+	Use:   "build --asset build.yml",
+	Short: "Create builds (one build_id per platform) from a build.yml",
+	Long: `Create builds from a build.yml (spec: build). Each platform in the file gets
+its own build_id, printed for crash reporters and CI. --os/--arch/--channel
+replace the file's platforms with a single one, for CI matrices.
+
+The file can also set engine_version, media (cover, thumbnail, gallery) and
+symbols. Symbols need exactly one platform. Everything is validated locally
+before anything is sent.` + platformFlagHelp + "\n\n" + authHelp,
+	Example: `  chauffeur build --asset build.yml
+  chauffeur build --asset build.yml --os windows --arch x86_64 --symbols build/symbols
+  chauffeur build --asset build.yml --engine-version 4.3 --json`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get values from Viper (flags > env vars > defaults)
-		accessToken := viper.GetString("access")
-		secretKey, err := resolveSecret(cmd)
+		assetFile, _ := cmd.Flags().GetString("asset")
+		config, err := ParseYAML(assetFile)
 		if err != nil {
 			return err
 		}
-		apiURL := viper.GetString("url")
-		assetFile, _ := cmd.Flags().GetString("asset")
-
-		// Validate required fields
-		if assetFile == "" {
-			return fmt.Errorf("--asset flag is required")
-		}
-		if accessToken == "" {
-			return fmt.Errorf("access token is required (use --access flag or set BLAZIUM_ACCESS_TOKEN env var)")
-		}
-		if secretKey == "" {
-			return fmt.Errorf("secret key is required (set BLAZIUM_SECRET_KEY or pipe it with --secret-stdin)")
-		}
-
-		client := NewClient(apiURL, accessToken, secretKey)
-		client.SetUploadURL(viper.GetString("upload"))
-
-		config, err := ParseYAML(assetFile)
-		if err != nil {
-			return fmt.Errorf("error parsing YAML file: %w", err)
-		}
 		if config.Spec != "build" {
-			return fmt.Errorf("invalid spec type '%s' in YAML file, expected 'build'", config.Spec)
+			return usageErrorf("%s has spec %q; chauffeur build needs spec: build", assetFile, config.Spec)
 		}
+		a := config.BuildAsset
 		osFlag, _ := cmd.Flags().GetString("os")
 		archFlag, _ := cmd.Flags().GetString("arch")
 		channelFlag, _ := cmd.Flags().GetString("channel")
 		if osFlag != "" || archFlag != "" || channelFlag != "" {
-			config.BuildAsset.Platforms = nil
+			a.Platforms = nil
 			if osFlag != "" {
-				config.BuildAsset.OS = osFlag
+				a.OS = osFlag
 			}
 			if archFlag != "" {
-				config.BuildAsset.Arch = archFlag
+				a.Arch = archFlag
 			}
 			if channelFlag != "" {
-				config.BuildAsset.Channel = channelFlag
+				a.Channel = channelFlag
+			}
+			if a.OS == "" {
+				return usageErrorf("--arch and --channel need --os (or os in %s)", assetFile)
 			}
 		}
-
-		// Process build
-		if err := ProcessBuild(client, config); err != nil {
-			return fmt.Errorf("error processing build: %w", err)
+		if v, _ := cmd.Flags().GetString("engine-version"); v != "" {
+			a.EngineVersion = v
 		}
-
-		fmt.Println("Upload completed successfully")
-		return nil
-	},
-}
-
-// addfilesCmd represents the addfiles command
-var addfilesCmd = &cobra.Command{
-	Use:   "addfiles",
-	Short: "Upload files using a YAML configuration file",
-	Long: `Upload files to the Blazium service using a YAML configuration file.
-The YAML file must have spec: "addfiles" and contain file asset information.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get values from Viper (flags > env vars > defaults)
-		accessToken := viper.GetString("access")
-		secretKey, err := resolveSecret(cmd)
+		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
+			a.Symbols = v
+		}
+		client, err := deployClient(cmd)
 		if err != nil {
 			return err
 		}
-		apiURL := viper.GetString("url")
-		assetFile, _ := cmd.Flags().GetString("asset")
-
-		// Validate required fields
-		if assetFile == "" {
-			return fmt.Errorf("--asset flag is required")
-		}
-		if accessToken == "" {
-			return fmt.Errorf("access token is required (use --access flag or set BLAZIUM_ACCESS_TOKEN env var)")
-		}
-		if secretKey == "" {
-			return fmt.Errorf("secret key is required (set BLAZIUM_SECRET_KEY or pipe it with --secret-stdin)")
-		}
-
-		client := NewClient(apiURL, accessToken, secretKey)
-		client.SetUploadURL(viper.GetString("upload"))
-
-		config, err := ParseYAML(assetFile)
-		if err != nil {
-			return fmt.Errorf("error parsing YAML file: %w", err)
-		}
-
-		// Validate spec type
-		if config.Spec != "addfiles" {
-			return fmt.Errorf("invalid spec type '%s' in YAML file, expected 'addfiles'", config.Spec)
-		}
-		if osFlag, _ := cmd.Flags().GetString("os"); osFlag != "" {
-			config.FilesAsset.OS = osFlag
-		}
-		if archFlag, _ := cmd.Flags().GetString("arch"); archFlag != "" {
-			config.FilesAsset.Arch = archFlag
-		}
-		if channelFlag, _ := cmd.Flags().GetString("channel"); channelFlag != "" {
-			config.FilesAsset.Channel = channelFlag
-		}
-
-		// Process files
-		if err := ProcessFiles(client, config); err != nil {
-			return fmt.Errorf("error processing files: %w", err)
-		}
-
-		fmt.Println("Upload completed successfully")
-		return nil
+		return ProcessBuild(client, config)
 	},
 }
 
-// genbuildCmd represents the genbuild command
+var addfilesCmd = &cobra.Command{
+	Use:   "addfiles --asset addfiles.yml",
+	Short: "Create a platform build and upload its files from an addfiles.yml",
+	Long: `Create one platform build and upload its files (spec: addfiles). The listed
+files are zipped, checksummed and uploaded: in one streamed request up to
+64 MB, otherwise in 16 MB chunks that resume after a dropped connection and
+retry rate limits and server errors with backoff. Build files can be up to
+5 GB.
+
+Set symbols (or --symbols) to upload Breakpad symbols for the new build.` + platformFlagHelp + "\n\n" + authHelp,
+	Example: `  chauffeur addfiles --asset addfiles.yml
+  chauffeur addfiles --asset addfiles.yml --os linux --arch arm64 --channel beta
+  chauffeur addfiles --asset addfiles.yml --symbols build/game.sym --json`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		assetFile, _ := cmd.Flags().GetString("asset")
+		config, err := ParseYAML(assetFile)
+		if err != nil {
+			return err
+		}
+		if config.Spec != "addfiles" {
+			return usageErrorf("%s has spec %q; chauffeur addfiles needs spec: addfiles", assetFile, config.Spec)
+		}
+		a := config.FilesAsset
+		if v, _ := cmd.Flags().GetString("os"); v != "" {
+			a.OS = v
+		}
+		if v, _ := cmd.Flags().GetString("arch"); v != "" {
+			a.Arch = v
+		}
+		if v, _ := cmd.Flags().GetString("channel"); v != "" {
+			a.Channel = v
+		}
+		if v, _ := cmd.Flags().GetString("engine-version"); v != "" {
+			a.EngineVersion = v
+		}
+		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
+			a.Symbols = v
+		}
+		client, err := deployClient(cmd)
+		if err != nil {
+			return err
+		}
+		return ProcessFiles(client, config)
+	},
+}
+
 var genbuildCmd = &cobra.Command{
 	Use:   "genbuild",
-	Short: "Generate a new build.yml file",
-	Long:  `Generate a new build.yml file with default values. Optionally scan a directory for images and set a version.`,
+	Short: "Write a starter build.yml",
+	Long: `Write build.yml in the current directory with starter values. --images adds
+the images in a directory to media.gallery.`,
+	Example: "  chauffeur genbuild --version 1.0.0 --engine-version 4.3 --images art/screenshots",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		imagesDir, _ := cmd.Flags().GetString("images")
-		version, _ := cmd.Flags().GetString("version")
-
-		// Default version if not provided
-		if version == "" {
-			version = "0.0.1"
+		ver, _ := cmd.Flags().GetString("version")
+		engine, _ := cmd.Flags().GetString("engine-version")
+		if ver == "" {
+			ver = "0.0.1"
 		}
-
-		// Scan images directory if provided
-		var imagePaths []string
+		engine, err := validateEngineVersion(engine)
+		if err != nil {
+			return err
+		}
+		var media *MediaSpec
 		if imagesDir != "" {
 			images, err := ScanImageDirectory(imagesDir)
 			if err != nil {
-				return fmt.Errorf("error scanning images directory: %w", err)
+				return usageErrorf("error scanning images directory: %v", err)
 			}
-			imagePaths = images
-			fmt.Printf("Found %d image(s) in directory\n", len(imagePaths))
+			if len(images) > maxGalleryImages {
+				return usageErrorf("%s has %d images; the gallery holds at most %d", imagesDir, len(images), maxGalleryImages)
+			}
+			media = &MediaSpec{Gallery: images}
+			logf("Found %d image(s) in directory\n", len(images))
 		}
-
-		// Create default build asset
-		buildAsset := BuildAsset{
-			Title:       "Untitled Build",
-			Type:        "game",
-			Description: "No description provided",
-			Version:     version,
-			Images:      imagePaths,
-			Changelog:   []ChangelogEntry{},
-		}
-
-		// Create config
 		config := &Config{
 			Version: "v1",
 			Spec:    "build",
-			Asset:   buildAsset,
+			Asset: BuildAsset{
+				Title:         "Untitled Build",
+				Type:          "game",
+				Description:   "No description provided",
+				Version:       ver,
+				EngineVersion: engine,
+				Media:         media,
+				Changelog:     []ChangelogEntry{},
+			},
 		}
-
-		// Write to build.yml
 		if err := WriteYAMLFile("build.yml", config); err != nil {
-			return fmt.Errorf("error writing build.yml: %w", err)
+			return usageErrorf("error writing build.yml: %v", err)
 		}
-
-		fmt.Println("Successfully generated build.yml")
+		logln("Successfully generated build.yml")
 		return nil
 	},
 }
 
-// addchangelogCmd represents the addchangelog command
 var addchangelogCmd = &cobra.Command{
-	Use:   "addchangelog",
-	Short: "Add a changelog entry to build.yml",
-	Long:  `Add a changelog entry to an existing build.yml file. The entry will be appended to the end of the changelog list.`,
+	Use:     "addchangelog --title T --description D",
+	Short:   "Append a changelog entry to build.yml",
+	Long:    "Append a changelog entry to build.yml in the current directory (at most 100 entries).",
+	Example: `  chauffeur addchangelog --title "Fixed saves" --description "Saves no longer corrupt on exit."`,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		title, _ := cmd.Flags().GetString("title")
 		description, _ := cmd.Flags().GetString("description")
-
-		// Validate required fields
-		if title == "" {
-			return fmt.Errorf("--title flag is required")
+		title, description = strings.TrimSpace(title), strings.TrimSpace(description)
+		if title == "" || description == "" {
+			return usageErrorf("--title and --description are required")
 		}
-		if description == "" {
-			return fmt.Errorf("--description flag is required")
-		}
-
-		// Read existing build.yml
 		config, err := ReadYAMLFile("build.yml")
 		if err != nil {
-			return fmt.Errorf("error reading build.yml: %w", err)
+			return usageErrorf("error reading build.yml: %v", err)
 		}
-
-		// Validate spec type
 		if config.Spec != "build" {
-			return fmt.Errorf("invalid spec type '%s' in build.yml, expected 'build'", config.Spec)
+			return usageErrorf("build.yml has spec %q, expected build", config.Spec)
 		}
-
-		// Parse the asset to get the build asset
 		assetData, err := yaml.Marshal(config.Asset)
 		if err != nil {
-			return fmt.Errorf("failed to marshal asset: %w", err)
+			return err
 		}
-
 		var buildAsset BuildAsset
 		if err := yaml.Unmarshal(assetData, &buildAsset); err != nil {
-			return fmt.Errorf("failed to parse build asset: %w", err)
+			return usageErrorf("failed to parse build asset: %v", err)
 		}
-
-		// Add new changelog entry
-		newEntry := ChangelogEntry{
-			Title:       title,
-			Description: description,
+		if len(buildAsset.Changelog) >= maxChangelogItems {
+			return usageErrorf("build.yml already has %d changelog entries (the limit)", maxChangelogItems)
 		}
-		buildAsset.Changelog = append(buildAsset.Changelog, newEntry)
-
-		// Update config with modified asset
+		buildAsset.Changelog = append(buildAsset.Changelog, ChangelogEntry{Title: title, Description: description})
 		config.Asset = buildAsset
-
-		// Write back to build.yml
 		if err := WriteYAMLFile("build.yml", config); err != nil {
-			return fmt.Errorf("error writing build.yml: %w", err)
+			return usageErrorf("error writing build.yml: %v", err)
 		}
-
-		fmt.Println("Successfully added changelog entry to build.yml")
+		logln("Successfully added changelog entry to build.yml")
 		return nil
 	},
 }
 
-// setfilesCmd represents the setfiles command
 var setfilesCmd = &cobra.Command{
 	Use:   "setfiles",
-	Short: "Generate a new addfiles.yml file",
-	Long:  `Generate a new addfiles.yml file with default values. Optionally scan a directory for files and set various configuration options.`,
+	Short: "Write a starter addfiles.yml",
+	Long:  "Write addfiles.yml in the current directory. --files adds every file in a directory." + platformFlagHelp,
+	Example: `  chauffeur setfiles --files build/windows --os windows --arch x86_64 --version 1.0.0
+  chauffeur setfiles --files build/linux --os linux --symbols build/symbols`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		version, _ := cmd.Flags().GetString("version")
+		ver, _ := cmd.Flags().GetString("version")
 		channel, _ := cmd.Flags().GetString("channel")
 		osType, _ := cmd.Flags().GetString("os")
 		assetType, _ := cmd.Flags().GetString("type")
 		arch, _ := cmd.Flags().GetString("arch")
 		filesDir, _ := cmd.Flags().GetString("files")
-
-		// Set defaults if not provided
-		if version == "" {
-			version = "0.0.1"
-		}
-		if channel == "" {
-			channel = "stable"
+		engine, _ := cmd.Flags().GetString("engine-version")
+		symbols, _ := cmd.Flags().GetString("symbols")
+		if ver == "" {
+			ver = "0.0.1"
 		}
 		if osType == "" {
 			osType = "windows"
@@ -292,43 +277,43 @@ var setfilesCmd = &cobra.Command{
 		if arch == "" {
 			arch = "x86_64"
 		}
-
-		// Scan files directory if provided
+		p, err := validatePlatform(osType, arch, channel)
+		if err != nil {
+			return err
+		}
+		engine, err = validateEngineVersion(engine)
+		if err != nil {
+			return err
+		}
 		var fileEntries []FileEntry
 		if filesDir != "" {
 			files, err := ScanFileDirectory(filesDir)
 			if err != nil {
-				return fmt.Errorf("error scanning files directory: %w", err)
+				return usageErrorf("error scanning files directory: %v", err)
 			}
 			for _, file := range files {
 				fileEntries = append(fileEntries, FileEntry{File: file})
 			}
-			fmt.Printf("Found %d file(s) in directory\n", len(fileEntries))
+			logf("Found %d file(s) in directory\n", len(fileEntries))
 		}
-
-		// Create default files asset
-		filesAsset := FilesAsset{
-			Type:    assetType,
-			Version: version,
-			Channel: channel,
-			OS:      osType,
-			Arch:    arch,
-			Files:   fileEntries,
-		}
-
-		// Create config
 		config := &Config{
 			Version: "v1",
 			Spec:    "addfiles",
-			Asset:   filesAsset,
+			Asset: FilesAsset{
+				Type:          assetType,
+				Version:       ver,
+				EngineVersion: engine,
+				Channel:       p.Channel,
+				OS:            p.OS,
+				Arch:          p.Arch,
+				Symbols:       symbols,
+				Files:         fileEntries,
+			},
 		}
-
-		// Write to addfiles.yml
 		if err := WriteYAMLFile("addfiles.yml", config); err != nil {
-			return fmt.Errorf("error writing addfiles.yml: %w", err)
+			return usageErrorf("error writing addfiles.yml: %v", err)
 		}
-
-		fmt.Println("Successfully generated addfiles.yml")
+		logln("Successfully generated addfiles.yml")
 		return nil
 	},
 }
@@ -337,68 +322,97 @@ func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.Version = version
 
-	// Persistent flags (available to all subcommands)
-	rootCmd.PersistentFlags().StringVarP(&accessToken, "access", "", "", "Blazium access token (overrides BLAZIUM_ACCESS_TOKEN env var)")
-	rootCmd.PersistentFlags().StringVarP(&secretKey, "secret", "", "", "Blazium secret key (visible to other processes; prefer BLAZIUM_SECRET_KEY or --secret-stdin)")
-	rootCmd.PersistentFlags().Bool("secret-stdin", false, "Read the Blazium secret key from the first line of stdin")
-	rootCmd.PersistentFlags().StringVarP(&apiURL, "url", "", defaultAPIURL, "API base URL (overrides BLAZIUM_API_URL env var)")
-	rootCmd.PersistentFlags().String("upload", defaultUploadURL, "Upload service base URL (overrides BLAZIUM_UPLOAD_URL env var)")
+	pf := rootCmd.PersistentFlags()
+	pf.StringVarP(&accessToken, "access", "", "", "Deploy key access token (overrides BLAZIUM_ACCESS_TOKEN)")
+	pf.StringVarP(&secretKey, "secret", "", "", "Deploy key secret (visible to other processes; prefer BLAZIUM_SECRET_KEY or --secret-stdin)")
+	pf.Bool("secret-stdin", false, "Read the deploy key secret from the first line of stdin")
+	pf.StringVarP(&apiURL, "url", "", defaultAPIURL, "API base URL (overrides BLAZIUM_API_URL)")
+	pf.String("upload", defaultUploadURL, "Upload service base URL (overrides BLAZIUM_UPLOAD_URL)")
+	pf.BoolVar(&jsonOutput, "json", false, "Print the result as one JSON object on stdout; progress goes to stderr")
 
-	viper.BindPFlag("access", rootCmd.PersistentFlags().Lookup("access"))
-	viper.BindPFlag("secret", rootCmd.PersistentFlags().Lookup("secret"))
-	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
-	viper.BindPFlag("upload", rootCmd.PersistentFlags().Lookup("upload"))
+	viper.BindPFlag("access", pf.Lookup("access"))
+	viper.BindPFlag("secret", pf.Lookup("secret"))
+	viper.BindPFlag("url", pf.Lookup("url"))
+	viper.BindPFlag("upload", pf.Lookup("upload"))
 
-	// Flags for subcommands
-	buildCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
-	buildCmd.Flags().String("os", "", "OS for this build_id (windows, linux, macos). Overrides YAML; use in CI matrices.")
-	buildCmd.Flags().String("arch", "", "Arch for this build_id (x86_64, arm64). Overrides YAML.")
-	buildCmd.Flags().String("channel", "", "Channel for this build_id (stable, beta). Overrides YAML.")
-	addfilesCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to YAML asset file (required)")
-	addfilesCmd.Flags().String("os", "", "OS for this build_id. Overrides YAML.")
-	addfilesCmd.Flags().String("arch", "", "Arch for this build_id. Overrides YAML.")
-	addfilesCmd.Flags().String("channel", "", "Channel for this build_id. Overrides YAML.")
-	genbuildCmd.Flags().String("images", "", "Directory containing images to scan and add (optional)")
-	genbuildCmd.Flags().String("version", "", "Version to set for the build (optional, defaults to 0.0.1)")
-	addchangelogCmd.Flags().String("title", "", "Title for the changelog entry (required)")
-	addchangelogCmd.Flags().String("description", "", "Description for the changelog entry (required)")
-	setfilesCmd.Flags().String("version", "", "Version to set for the files (optional, defaults to 0.0.1)")
-	setfilesCmd.Flags().String("channel", "", "Channel to set (optional, defaults to stable)")
-	setfilesCmd.Flags().String("os", "", "OS to set (optional, defaults to windows)")
-	setfilesCmd.Flags().String("type", "", "Type to set (optional, defaults to game)")
-	setfilesCmd.Flags().String("arch", "", "Architecture to set (optional, defaults to x86_64)")
-	setfilesCmd.Flags().String("files", "", "Directory containing files to scan and add (optional)")
+	osUsage := "OS: " + osHelp
+	archUsage := "Arch: " + archHelp
+	channelUsage := "Channel: " + channelHelp
+	engineUsage := "Blazium/Godot engine version, like 4.3 or 4.3.0-beta.2"
+	symbolsUsage := "Breakpad symbols to upload for the build: a .sym file, a directory of .sym files, or a .zip"
 
-	// Mark asset as required for both subcommands
+	buildCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to build.yml (required)")
+	buildCmd.Flags().String("os", "", osUsage+". Replaces the file's platforms")
+	buildCmd.Flags().String("arch", "", archUsage+" (default x86_64)")
+	buildCmd.Flags().String("channel", "", channelUsage)
+	buildCmd.Flags().String("engine-version", "", engineUsage)
+	buildCmd.Flags().String("symbols", "", symbolsUsage+" (needs a single platform)")
+
+	addfilesCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to addfiles.yml (required)")
+	addfilesCmd.Flags().String("os", "", osUsage)
+	addfilesCmd.Flags().String("arch", "", archUsage)
+	addfilesCmd.Flags().String("channel", "", channelUsage)
+	addfilesCmd.Flags().String("engine-version", "", engineUsage)
+	addfilesCmd.Flags().String("symbols", "", symbolsUsage)
+
+	genbuildCmd.Flags().String("images", "", "Directory of gallery images to add (PNG, JPEG, GIF, WebP)")
+	genbuildCmd.Flags().String("version", "", "Build version (default 0.0.1, at most 32 characters)")
+	genbuildCmd.Flags().String("engine-version", "", engineUsage)
+
+	addchangelogCmd.Flags().String("title", "", "Changelog entry title (required)")
+	addchangelogCmd.Flags().String("description", "", "Changelog entry description (required)")
+
+	setfilesCmd.Flags().String("version", "", "Version (default 0.0.1)")
+	setfilesCmd.Flags().String("channel", "", channelUsage+" (default stable)")
+	setfilesCmd.Flags().String("os", "", osUsage+" (default windows)")
+	setfilesCmd.Flags().String("type", "", "Asset type (default game)")
+	setfilesCmd.Flags().String("arch", "", archUsage+" (default x86_64)")
+	setfilesCmd.Flags().String("files", "", "Directory of files to add")
+	setfilesCmd.Flags().String("engine-version", "", engineUsage)
+	setfilesCmd.Flags().String("symbols", "", symbolsUsage)
+
 	buildCmd.MarkFlagRequired("asset")
 	addfilesCmd.MarkFlagRequired("asset")
 	addchangelogCmd.MarkFlagRequired("title")
 	addchangelogCmd.MarkFlagRequired("description")
 
-	// Add subcommands
-	rootCmd.AddCommand(buildCmd)
-	rootCmd.AddCommand(addfilesCmd)
-	rootCmd.AddCommand(genbuildCmd)
-	rootCmd.AddCommand(addchangelogCmd)
-	rootCmd.AddCommand(setfilesCmd)
+	rootCmd.AddCommand(buildCmd, addfilesCmd, symbolsCmd, mediaCmd, infoCmd, buildsCmd,
+		genbuildCmd, addchangelogCmd, setfilesCmd, gendocsCmd)
 }
 
 // initConfig reads in environment variables and config file if set
 func initConfig() {
-	// Set environment variable prefix
 	viper.SetEnvPrefix("BLAZIUM")
-
-	// Bind environment variables
 	viper.BindEnv("access", "BLAZIUM_ACCESS_TOKEN")
 	viper.BindEnv("secret", "BLAZIUM_SECRET_KEY")
 	viper.BindEnv("url", "BLAZIUM_API_URL")
 	viper.BindEnv("upload", "BLAZIUM_UPLOAD_URL")
-
 	viper.SetDefault("url", defaultAPIURL)
 	viper.SetDefault("upload", defaultUploadURL)
-
-	// Read environment variables
 	viper.AutomaticEnv()
+}
+
+// deployClient builds an authenticated client from flags and environment.
+func deployClient(cmd *cobra.Command) (*Client, error) {
+	token := strings.TrimSpace(viper.GetString("access"))
+	secret, err := resolveSecret(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if token == "" {
+		return nil, usageErrorf("the deploy key access token is missing: set BLAZIUM_ACCESS_TOKEN (or --access)")
+	}
+	if secret == "" {
+		return nil, usageErrorf("the deploy key secret is missing: set BLAZIUM_SECRET_KEY or pipe it with --secret-stdin")
+	}
+	for _, u := range []string{viper.GetString("url"), viper.GetString("upload")} {
+		if err := checkServiceURL(u); err != nil {
+			return nil, err
+		}
+	}
+	client := NewClient(viper.GetString("url"), token, secret)
+	client.SetUploadURL(viper.GetString("upload"))
+	return client, nil
 }
 
 // resolveSecret reads the secret from stdin with --secret-stdin, otherwise from
@@ -408,9 +422,9 @@ func resolveSecret(cmd *cobra.Command) (string, error) {
 		return readSecret(os.Stdin)
 	}
 	if f := cmd.Flags().Lookup("secret"); f != nil && f.Changed {
-		fmt.Fprintln(os.Stderr, "Warning: --secret is visible in the process list and shell history. Use BLAZIUM_SECRET_KEY or --secret-stdin.")
+		fmt.Fprintln(stderr, "Warning: --secret is visible in the process list and shell history. Use BLAZIUM_SECRET_KEY or --secret-stdin.")
 	}
-	return viper.GetString("secret"), nil
+	return strings.TrimSpace(viper.GetString("secret")), nil
 }
 
 func readSecret(r io.Reader) (string, error) {
@@ -422,8 +436,14 @@ func readSecret(r io.Reader) (string, error) {
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	err := rootCmd.Execute()
+	if err == nil {
+		return
 	}
+	if jsonOutput {
+		emitError(err)
+	} else {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+	}
+	os.Exit(exitCode(err))
 }
