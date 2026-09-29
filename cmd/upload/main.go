@@ -279,7 +279,7 @@ func putS3(path, file, spacePath, acl, storageType string) error {
 	req.Header.Set("Authorization", fmt.Sprintf("AWS %s:%s", key, signature))
 
 	// Execute request
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload request failed: %w", err)
