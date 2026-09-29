@@ -119,7 +119,11 @@ files are zipped, checksummed and uploaded: in one streamed request up to
 retry rate limits and server errors with backoff. Build files can be up to
 5 GB.
 
-Set symbols (or --symbols) to upload Breakpad symbols for the new build.` + platformFlagHelp + "\n\n" + authHelp,
+If a build with the same version, type, OS, arch and channel already exists
+(for example from chauffeur build), the files are added to it and its title,
+description and changelog are kept. Otherwise a new build is created.
+
+Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platformFlagHelp + "\n\n" + authHelp,
 	Example: `  chauffeur addfiles --asset addfiles.yml
   chauffeur addfiles --asset addfiles.yml --os linux --arch arm64 --channel beta
   chauffeur addfiles --asset addfiles.yml --symbols build/game.sym --json`,
