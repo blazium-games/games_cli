@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Client wraps HTTP client with authentication
@@ -27,8 +29,44 @@ func NewClient(baseURL, accessToken, secretKey string) *Client {
 		baseURL:     baseURL,
 		accessToken: accessToken,
 		secretKey:   secretKey,
-		httpClient:  &http.Client{},
+		httpClient:  newHTTPClient(),
 	}
+}
+
+// credentialHeaders are dropped when a redirect leaves the original host.
+var credentialHeaders = []string{"X-Access-Token", "X-Secret-Key", "Authorization"}
+
+// newHTTPClient bounds every phase of a request. The overall timeout is long
+// because single-shot build uploads can be several gigabytes.
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 2 * time.Hour,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   30 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Minute,
+			ExpectContinueTimeout: 1 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+		CheckRedirect: checkRedirect,
+	}
+}
+
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	first := via[0].URL
+	if first.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from https to %s", req.URL.Scheme)
+	}
+	if !strings.EqualFold(req.URL.Host, first.Host) {
+		for _, h := range credentialHeaders {
+			req.Header.Del(h)
+		}
+	}
+	return nil
 }
 
 func (c *Client) SetUploadURL(uploadURL string) {

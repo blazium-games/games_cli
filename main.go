@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -36,7 +39,10 @@ var buildCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get values from Viper (flags > env vars > defaults)
 		accessToken := viper.GetString("access")
-		secretKey := viper.GetString("secret")
+		secretKey, err := resolveSecret(cmd)
+		if err != nil {
+			return err
+		}
 		apiURL := viper.GetString("url")
 		assetFile, _ := cmd.Flags().GetString("asset")
 
@@ -48,7 +54,7 @@ var buildCmd = &cobra.Command{
 			return fmt.Errorf("access token is required (use --access flag or set BLAZIUM_ACCESS_TOKEN env var)")
 		}
 		if secretKey == "" {
-			return fmt.Errorf("secret key is required (use --secret flag or set BLAZIUM_SECRET_KEY env var)")
+			return fmt.Errorf("secret key is required (set BLAZIUM_SECRET_KEY or pipe it with --secret-stdin)")
 		}
 
 		client := NewClient(apiURL, accessToken, secretKey)
@@ -96,7 +102,10 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get values from Viper (flags > env vars > defaults)
 		accessToken := viper.GetString("access")
-		secretKey := viper.GetString("secret")
+		secretKey, err := resolveSecret(cmd)
+		if err != nil {
+			return err
+		}
 		apiURL := viper.GetString("url")
 		assetFile, _ := cmd.Flags().GetString("asset")
 
@@ -108,7 +117,7 @@ The YAML file must have spec: "addfiles" and contain file asset information.`,
 			return fmt.Errorf("access token is required (use --access flag or set BLAZIUM_ACCESS_TOKEN env var)")
 		}
 		if secretKey == "" {
-			return fmt.Errorf("secret key is required (use --secret flag or set BLAZIUM_SECRET_KEY env var)")
+			return fmt.Errorf("secret key is required (set BLAZIUM_SECRET_KEY or pipe it with --secret-stdin)")
 		}
 
 		client := NewClient(apiURL, accessToken, secretKey)
@@ -330,7 +339,8 @@ func init() {
 
 	// Persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().StringVarP(&accessToken, "access", "", "", "Blazium access token (overrides BLAZIUM_ACCESS_TOKEN env var)")
-	rootCmd.PersistentFlags().StringVarP(&secretKey, "secret", "", "", "Blazium secret key (overrides BLAZIUM_SECRET_KEY env var)")
+	rootCmd.PersistentFlags().StringVarP(&secretKey, "secret", "", "", "Blazium secret key (visible to other processes; prefer BLAZIUM_SECRET_KEY or --secret-stdin)")
+	rootCmd.PersistentFlags().Bool("secret-stdin", false, "Read the Blazium secret key from the first line of stdin")
 	rootCmd.PersistentFlags().StringVarP(&apiURL, "url", "", defaultAPIURL, "API base URL (overrides BLAZIUM_API_URL env var)")
 	rootCmd.PersistentFlags().String("upload", defaultUploadURL, "Upload service base URL (overrides BLAZIUM_UPLOAD_URL env var)")
 
@@ -389,6 +399,26 @@ func initConfig() {
 
 	// Read environment variables
 	viper.AutomaticEnv()
+}
+
+// resolveSecret reads the secret from stdin with --secret-stdin, otherwise from
+// --secret or BLAZIUM_SECRET_KEY.
+func resolveSecret(cmd *cobra.Command) (string, error) {
+	if fromStdin, _ := cmd.Flags().GetBool("secret-stdin"); fromStdin {
+		return readSecret(os.Stdin)
+	}
+	if f := cmd.Flags().Lookup("secret"); f != nil && f.Changed {
+		fmt.Fprintln(os.Stderr, "Warning: --secret is visible in the process list and shell history. Use BLAZIUM_SECRET_KEY or --secret-stdin.")
+	}
+	return viper.GetString("secret"), nil
+}
+
+func readSecret(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(io.LimitReader(r, 4096)).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("failed to read secret from stdin: %w", err)
+	}
+	return strings.TrimSpace(line), nil
 }
 
 func main() {

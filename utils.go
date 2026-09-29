@@ -21,8 +21,72 @@ func ValidateFiles(filePaths []string) error {
 	return nil
 }
 
+// zipEntryNames names each file by its path relative to the deepest directory
+// shared by all of them. Names that would collide (also ignoring case, which the
+// uploader rejects) are an error.
+func zipEntryNames(filePaths []string) ([]string, error) {
+	abs := make([]string, len(filePaths))
+	for i, p := range filePaths {
+		a, err := filepath.Abs(p)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve %s: %w", p, err)
+		}
+		abs[i] = filepath.Clean(a)
+	}
+	base := ""
+	for i, a := range abs {
+		dir := filepath.Dir(a)
+		if i == 0 {
+			base = dir
+			continue
+		}
+		for base != "" && !withinDir(dir, base) {
+			parent := filepath.Dir(base)
+			if parent == base {
+				base = ""
+				break
+			}
+			base = parent
+		}
+	}
+	names := make([]string, len(abs))
+	seen := map[string]string{}
+	for i, a := range abs {
+		name := a
+		if base != "" {
+			rel, err := filepath.Rel(base, a)
+			if err != nil {
+				return nil, fmt.Errorf("failed to name %s in the zip: %w", filePaths[i], err)
+			}
+			name = rel
+		} else {
+			name = strings.TrimPrefix(name, filepath.VolumeName(name))
+		}
+		name = strings.TrimLeft(filepath.ToSlash(name), "/")
+		if name == "" || name == ".." || strings.HasPrefix(name, "../") {
+			return nil, fmt.Errorf("cannot name %s in the zip", filePaths[i])
+		}
+		key := strings.ToLower(name)
+		if prev, ok := seen[key]; ok {
+			return nil, fmt.Errorf("%s and %s would have the same name in the zip (%s)", prev, filePaths[i], name)
+		}
+		seen[key] = filePaths[i]
+		names[i] = name
+	}
+	return names, nil
+}
+
+func withinDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // CreateZip creates a zip file containing all the specified files
 func CreateZip(outputPath string, filePaths []string) error {
+	names, err := zipEntryNames(filePaths)
+	if err != nil {
+		return err
+	}
 	zipFile, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create zip file: %w", err)
@@ -32,7 +96,7 @@ func CreateZip(outputPath string, filePaths []string) error {
 	zipWriter := zip.NewWriter(zipFile)
 	defer zipWriter.Close()
 
-	for _, filePath := range filePaths {
+	for i, filePath := range filePaths {
 		// Open the source file
 		srcFile, err := os.Open(filePath)
 		if err != nil {
@@ -53,8 +117,7 @@ func CreateZip(outputPath string, filePaths []string) error {
 			return fmt.Errorf("failed to create zip header for %s: %w", filePath, err)
 		}
 
-		// Use the base name of the file in the zip
-		header.Name = filepath.Base(filePath)
+		header.Name = names[i]
 		header.Method = zip.Deflate
 
 		// Create the file in the zip
