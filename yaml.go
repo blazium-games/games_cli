@@ -83,18 +83,18 @@ func (m *MediaSpec) empty() bool {
 
 // BuildAsset represents the asset structure for build spec
 type BuildAsset struct {
-	Title       string `yaml:"title"`
-	Type        string `yaml:"type"`
+	Title string `yaml:"title"`
+	Type  string `yaml:"type"`
 	// AssetType is a deprecated alias for Type.
-	AssetType     string           `yaml:"asset_type,omitempty"`
-	Description   string           `yaml:"description"`
-	Version       string           `yaml:"version"`
-	EngineVersion string           `yaml:"engine_version,omitempty"`
-	OS            string           `yaml:"os,omitempty"`
-	Arch          string           `yaml:"arch,omitempty"`
-	Channel       string           `yaml:"channel,omitempty"`
-	Platforms     []PlatformSpec   `yaml:"platforms,omitempty"`
-	Video         string           `yaml:"video,omitempty"`
+	AssetType     string         `yaml:"asset_type,omitempty"`
+	Description   string         `yaml:"description"`
+	Version       string         `yaml:"version"`
+	EngineVersion string         `yaml:"engine_version,omitempty"`
+	OS            string         `yaml:"os,omitempty"`
+	Arch          string         `yaml:"arch,omitempty"`
+	Channel       string         `yaml:"channel,omitempty"`
+	Platforms     []PlatformSpec `yaml:"platforms,omitempty"`
+	Video         string         `yaml:"video,omitempty"`
 	// Images are added to the gallery; prefer media.gallery.
 	Images    []string         `yaml:"images,omitempty"`
 	Media     *MediaSpec       `yaml:"media,omitempty"`

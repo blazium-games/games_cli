@@ -3,7 +3,6 @@ name: Chauffeur Upload
 on:
   push:
     branches:
-      - main
       - master
   pull_request:
 
@@ -26,6 +25,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Format
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+
       - name: Vet and test
         run: go vet ./... && go test ./...
 
@@ -33,6 +37,7 @@ jobs:
     needs: test
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    environment: production
     strategy:
       fail-fast: false
       matrix:
