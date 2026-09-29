@@ -4,9 +4,15 @@ ignore/
 *.exe
 *.log
 .env
+.env.*
 *.syso
-debug.html
-test_failure.png
-playwright-report/
-test-results/
-playwright_logs.txt
+/chauffeur
+/upload
+dist/
+artifacts/
+VERSION
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
