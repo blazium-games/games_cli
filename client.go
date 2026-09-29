@@ -8,6 +8,8 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,7 @@ type Client struct {
 // NewClient creates a new authenticated HTTP client
 func NewClient(baseURL, accessToken, secretKey string) *Client {
 	return &Client{
-		baseURL:     baseURL,
+		baseURL:     strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		accessToken: accessToken,
 		secretKey:   secretKey,
 		httpClient:  newHTTPClient(),
@@ -37,7 +39,7 @@ func NewClient(baseURL, accessToken, secretKey string) *Client {
 var credentialHeaders = []string{"X-Access-Token", "X-Secret-Key", "Authorization"}
 
 // newHTTPClient bounds every phase of a request. The overall timeout is long
-// because single-shot build uploads can be several gigabytes.
+// because single-shot build uploads can be large.
 func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: 2 * time.Hour,
@@ -73,6 +75,7 @@ func (c *Client) SetUploadURL(uploadURL string) {
 	c.uploadURL = strings.TrimRight(strings.TrimSpace(uploadURL), "/")
 }
 
+// filesURL is an endpoint on the upload service (games_upload).
 func (c *Client) filesURL(path string) string {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path
@@ -81,11 +84,10 @@ func (c *Client) filesURL(path string) string {
 	if base == "" {
 		base = c.baseURL
 	}
-	return strings.TrimRight(base, "/") + path
+	return base + path
 }
 
-// buildURL constructs the full URL from baseURL and endpoint
-// If endpoint is already a full URL (starts with http:// or https://), it's used as-is
+// buildURL is an endpoint on the API (games_service). Full URLs are used as-is.
 func (c *Client) buildURL(endpoint string) string {
 	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
 		return endpoint
@@ -95,352 +97,258 @@ func (c *Client) buildURL(endpoint string) string {
 
 // APIResponse represents the standard API response structure
 type APIResponse struct {
-	Success bool                   `json:"success"`
-	Data    map[string]interface{} `json:"data,omitempty"`
+	Success bool           `json:"success"`
+	Data    map[string]any `json:"data,omitempty"`
 	Error   *struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Code    int            `json:"code"`
+		Message string         `json:"message"`
+		Data    map[string]any `json:"data,omitempty"`
 	} `json:"error,omitempty"`
 }
 
-// UploadIncompleteResponse represents the response for an incomplete upload
-type UploadIncompleteResponse struct {
-	SessionID    string  `json:"session_id"`
-	CurrentSize  int64   `json:"current_size"`
-	ExpectedSize int64   `json:"expected_size"`
-	Progress     float64 `json:"progress"`
-}
+const maxResponseBytes = 8 << 20
 
-// UploadCompleteResponse represents the response for a complete upload
-type UploadCompleteResponse struct {
-	FileUID  string `json:"file_uid"`
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Filename string `json:"filename"`
-	Checksum string `json:"checksum"`
-	Channel  string `json:"channel"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-}
-
-// PostJSON sends a POST request with JSON body
-func (c *Client) PostJSON(endpoint string, body interface{}) (*APIResponse, error) {
-	jsonData, err := json.Marshal(body)
+func (c *Client) newRequest(method, target string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, target, body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, usageErrorf("invalid URL %s: %v", redactURL(target), err)
 	}
-
-	url := c.buildURL(endpoint)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Access-Token", c.accessToken)
 	req.Header.Set("X-Secret-Key", c.secretKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !apiResp.Success {
-		if apiResp.Error != nil {
-			return nil, fmt.Errorf("API error [%d]: %s", apiResp.Error.Code, apiResp.Error.Message)
-		}
-		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return &apiResp, nil
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "chauffeur/"+version)
+	return req, nil
 }
 
-// PostMultipart sends a POST request with multipart form data
-func (c *Client) PostMultipart(endpoint string, formData map[string]string, files map[string]string, additionalHeaders map[string]string) (*APIResponse, string, error) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add form fields
-	for key, value := range formData {
-		if err := writer.WriteField(key, value); err != nil {
-			return nil, "", fmt.Errorf("failed to write field %s: %w", key, err)
-		}
-	}
-
-	// Add files
-	for fieldName, filePath := range files {
-		file, err := os.Open(filePath)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to open file %s: %w", filePath, err)
-		}
-
-		part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
-		if err != nil {
-			file.Close()
-			return nil, "", fmt.Errorf("failed to create form file %s: %w", fieldName, err)
-		}
-
-		if _, err := io.Copy(part, file); err != nil {
-			file.Close()
-			return nil, "", fmt.Errorf("failed to copy file %s: %w", filePath, err)
-		}
-		file.Close()
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	url := c.buildURL(endpoint)
-	req, err := http.NewRequest("POST", url, &buf)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-Access-Token", c.accessToken)
-	req.Header.Set("X-Secret-Key", c.secretKey)
-
-	// Add additional headers
-	for key, value := range additionalHeaders {
-		req.Header.Set(key, value)
-	}
-
+// do sends req and parses the {success, data, error} envelope. Failures come
+// back as *apiError (the service answered) or *networkError (it didn't).
+func (c *Client) do(req *http.Request) (*APIResponse, http.Header, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("request failed: %w", err)
+		return nil, nil, &networkError{err: scrubError(err, c.secretKey, c.accessToken)}
 	}
 	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to read response: %w", err)
+		return nil, resp.Header, &networkError{err: fmt.Errorf("reading the response: %w", err)}
 	}
-
+	if len(raw) > maxResponseBytes {
+		return nil, resp.Header, &apiError{Status: resp.StatusCode, Message: "response is larger than 8 MB"}
+	}
 	var apiResp APIResponse
-	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
-		return nil, "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !apiResp.Success {
-		if apiResp.Error != nil {
-			return nil, "", fmt.Errorf("API error [%d]: %s", apiResp.Error.Code, apiResp.Error.Message)
+	if err := json.Unmarshal(raw, &apiResp); err != nil {
+		msg := http.StatusText(resp.StatusCode)
+		if resp.StatusCode < 400 {
+			msg = "the server answered with something other than JSON"
 		}
-		return nil, "", fmt.Errorf("API request failed with status %d", resp.StatusCode)
+		return nil, resp.Header, &apiError{Status: resp.StatusCode, Message: msg}
 	}
-
-	// Accept 202 Accepted status code (as per API documentation)
-	if resp.StatusCode != 202 && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
-		return nil, "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if !apiResp.Success || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		ae := &apiError{Status: resp.StatusCode}
+		if apiResp.Error != nil {
+			ae.Code, ae.Message, ae.Data = apiResp.Error.Code, apiResp.Error.Message, apiResp.Error.Data
+		}
+		return nil, resp.Header, ae
 	}
-
-	// Extract X-Upload-Session-ID from response headers
-	sessionID := resp.Header.Get("X-Upload-Session-ID")
-
-	return &apiResp, sessionID, nil
+	return &apiResp, resp.Header, nil
 }
 
-// PostMultipartMultipleFiles sends a POST request with multiple files using the same field name
-func (c *Client) PostMultipartMultipleFiles(endpoint string, formData map[string]string, fieldName string, filePaths []string, additionalHeaders map[string]string) (*APIResponse, error) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add form fields
-	for key, value := range formData {
-		if err := writer.WriteField(key, value); err != nil {
-			return nil, fmt.Errorf("failed to write field %s: %w", key, err)
-		}
-	}
-
-	// Add all files with the same field name
-	for _, filePath := range filePaths {
-		file, err := os.Open(filePath)
+func (c *Client) sendJSON(method, target string, body any) (*APIResponse, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
+			return nil, fmt.Errorf("failed to encode the request: %w", err)
 		}
-
-		part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
-		if err != nil {
-			file.Close()
-			return nil, fmt.Errorf("failed to create form file: %w", err)
-		}
-
-		if _, err := io.Copy(part, file); err != nil {
-			file.Close()
-			return nil, fmt.Errorf("failed to copy file %s: %w", filePath, err)
-		}
-		file.Close()
+		reader = bytes.NewReader(raw)
 	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	url := c.buildURL(endpoint)
-	req, err := http.NewRequest("POST", url, &buf)
+	req, err := c.newRequest(method, target, reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-Access-Token", c.accessToken)
-	req.Header.Set("X-Secret-Key", c.secretKey)
-
-	// Add additional headers
-	for key, value := range additionalHeaders {
-		req.Header.Set(key, value)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !apiResp.Success {
-		if apiResp.Error != nil {
-			return nil, fmt.Errorf("API error [%d]: %s", apiResp.Error.Code, apiResp.Error.Message)
-		}
-		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return &apiResp, nil
+	resp, _, err := c.do(req)
+	return resp, err
 }
 
-// PostMultipartResume sends a POST request with multipart form data and resume support
-func (c *Client) PostMultipartResume(endpoint string, formData map[string]string, filePath string, startByte, totalSize int64, sessionID string) (*APIResponse, string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
+// GetJSON sends a GET to the API.
+func (c *Client) GetJSON(endpoint string) (*APIResponse, error) {
+	return c.sendJSON(http.MethodGet, c.buildURL(endpoint), nil)
+}
 
-	// Seek to start position
-	if startByte > 0 {
-		if _, err := file.Seek(startByte, 0); err != nil {
-			return nil, "", fmt.Errorf("failed to seek file: %w", err)
+// PostJSON sends a POST request with JSON body to the API.
+func (c *Client) PostJSON(endpoint string, body any) (*APIResponse, error) {
+	return c.sendJSON(http.MethodPost, c.buildURL(endpoint), body)
+}
+
+// PutJSON sends a PUT request with JSON body to the API.
+func (c *Client) PutJSON(endpoint string, body any) (*APIResponse, error) {
+	return c.sendJSON(http.MethodPut, c.buildURL(endpoint), body)
+}
+
+// Delete sends a DELETE to the API.
+func (c *Client) Delete(endpoint string) (*APIResponse, error) {
+	return c.sendJSON(http.MethodDelete, c.buildURL(endpoint), nil)
+}
+
+// PostForm sends an application/x-www-form-urlencoded POST to target.
+func (c *Client) PostForm(target string, fields url.Values) (*APIResponse, http.Header, error) {
+	req, err := c.newRequest(http.MethodPost, target, strings.NewReader(fields.Encode()))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return c.do(req)
+}
+
+// formField is one ordered multipart text field. The upload service reads
+// fields before the file, so order matters.
+type formField struct{ Name, Value string }
+
+// formFile is one file part: Length bytes of Path starting at Offset, or the
+// whole file when Length < 0.
+type formFile struct {
+	Field  string
+	Path   string
+	Name   string
+	Offset int64
+	Length int64
+}
+
+// multipartBody streams fields and file sections without buffering file
+// contents, and knows its exact length so no chunked encoding is needed.
+func multipartBody(fields []formField, files []formFile) (io.Reader, int64, string, func(), error) {
+	var (
+		segs    []io.Reader
+		total   int64
+		handles []*os.File
+		buf     bytes.Buffer
+	)
+	closeAll := func() {
+		for _, f := range handles {
+			f.Close()
 		}
 	}
-
-	// Read the chunk to upload
-	remainingSize := totalSize - startByte
-	chunk := make([]byte, remainingSize)
-	n, err := file.Read(chunk)
-	if err != nil && err != io.EOF {
-		return nil, "", fmt.Errorf("failed to read file: %w", err)
+	flush := func() {
+		if buf.Len() == 0 {
+			return
+		}
+		b := append([]byte(nil), buf.Bytes()...)
+		segs = append(segs, bytes.NewReader(b))
+		total += int64(len(b))
+		buf.Reset()
 	}
-	chunk = chunk[:n]
-
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add form fields
-	for key, value := range formData {
-		if err := writer.WriteField(key, value); err != nil {
-			return nil, "", fmt.Errorf("failed to write field %s: %w", key, err)
+	mw := multipart.NewWriter(&buf)
+	for _, f := range fields {
+		if err := mw.WriteField(f.Name, f.Value); err != nil {
+			return nil, 0, "", closeAll, err
 		}
 	}
-
-	// Add file chunk
-	fieldName := "file"
-	fileName := filepath.Base(filePath)
-	part, err := writer.CreateFormFile(fieldName, fileName)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create form file: %w", err)
-	}
-
-	if _, err := part.Write(chunk); err != nil {
-		return nil, "", fmt.Errorf("failed to write file chunk: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	url := c.buildURL(endpoint)
-	req, err := http.NewRequest("POST", url, &buf)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-Access-Token", c.accessToken)
-	req.Header.Set("X-Secret-Key", c.secretKey)
-
-	// Add X-Upload-Session-ID header if provided
-	if sessionID != "" {
-		req.Header.Set("X-Upload-Session-ID", sessionID)
-	}
-
-	// Add Content-Range header for resume (required when resuming)
-	if startByte > 0 {
-		endByte := startByte + int64(len(chunk)) - 1
-		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startByte, endByte, totalSize))
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
-		return nil, "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !apiResp.Success {
-		if apiResp.Error != nil {
-			return nil, "", fmt.Errorf("API error [%d]: %s", apiResp.Error.Code, apiResp.Error.Message)
+	for _, ff := range files {
+		fh, err := os.Open(ff.Path)
+		if err != nil {
+			closeAll()
+			return nil, 0, "", func() {}, usageErrorf("cannot open %s: %v", ff.Path, err)
 		}
-		return nil, "", fmt.Errorf("API request failed with status %d", resp.StatusCode)
+		handles = append(handles, fh)
+		length := ff.Length
+		if length < 0 {
+			st, err := fh.Stat()
+			if err != nil {
+				closeAll()
+				return nil, 0, "", func() {}, err
+			}
+			length = st.Size() - ff.Offset
+		}
+		name := ff.Name
+		if name == "" {
+			name = filepath.Base(ff.Path)
+		}
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, ff.Field, name))
+		h.Set("Content-Type", "application/octet-stream")
+		if _, err := mw.CreatePart(h); err != nil {
+			closeAll()
+			return nil, 0, "", func() {}, err
+		}
+		flush()
+		segs = append(segs, io.NewSectionReader(fh, ff.Offset, length))
+		total += length
 	}
-
-	// Accept 202 Accepted status code (as per API documentation)
-	if resp.StatusCode != 202 && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
-		return nil, "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if err := mw.Close(); err != nil {
+		closeAll()
+		return nil, 0, "", func() {}, err
 	}
+	flush()
+	return io.MultiReader(segs...), total, mw.FormDataContentType(), closeAll, nil
+}
 
-	// Extract X-Upload-Session-ID from response headers
-	sessionIDFromHeader := resp.Header.Get("X-Upload-Session-ID")
-	// Use session ID from header if available, otherwise use the one passed in
-	if sessionIDFromHeader != "" {
-		sessionID = sessionIDFromHeader
+// PostMultipart streams fields and files to target.
+func (c *Client) PostMultipart(target string, fields []formField, files []formFile, headers map[string]string) (*APIResponse, http.Header, error) {
+	body, length, ctype, done, err := multipartBody(fields, files)
+	if err != nil {
+		return nil, nil, err
 	}
+	defer done()
+	req, err := c.newRequest(http.MethodPost, target, body)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.ContentLength = length
+	req.Header.Set("Content-Type", ctype)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return c.do(req)
+}
 
-	return &apiResp, sessionID, nil
+// scrubError removes credentials from an error message, in case a proxy or
+// transport ever echoes them.
+func scrubError(err error, secrets ...string) error {
+	msg := err.Error()
+	changed := false
+	for _, s := range secrets {
+		if len(s) >= 4 && strings.Contains(msg, s) {
+			msg = strings.ReplaceAll(msg, s, "[redacted]")
+			changed = true
+		}
+	}
+	if !changed {
+		return err
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+// checkServiceURL refuses to send the deploy key anywhere but https, except to
+// a loopback host for local testing.
+func checkServiceURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return usageErrorf("service URL %s is not a valid URL", redactURL(raw))
+	}
+	if u.User != nil {
+		return usageErrorf("service URL %s must not contain credentials", redactURL(raw))
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return usageErrorf("service URL %s must use https (http is only allowed for localhost)", redactURL(raw))
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(invalid URL)"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	return u.String()
 }

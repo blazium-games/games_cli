@@ -28,16 +28,16 @@ func RegisterParser(spec, version string, parser VersionParser) {
 func GetParser(spec, version string) (VersionParser, error) {
 	specParsers, exists := parserRegistry[spec]
 	if !exists {
-		return nil, fmt.Errorf("unsupported spec: %s", spec)
+		return nil, usageErrorf("unsupported spec: %s", spec)
 	}
 
 	parser, exists := specParsers[version]
 	if !exists {
 		supportedVersions := GetSupportedVersions(spec)
 		if len(supportedVersions) == 0 {
-			return nil, fmt.Errorf("unsupported version: %s for spec '%s' (no versions registered for this spec)", version, spec)
+			return nil, usageErrorf("unsupported version: %s for spec '%s' (no versions registered for this spec)", version, spec)
 		}
-		return nil, fmt.Errorf("unsupported version: %s for spec '%s' (supported versions: %s)", version, spec, strings.Join(supportedVersions, ", "))
+		return nil, usageErrorf("unsupported version: %s for spec '%s' (supported versions: %s)", version, spec, strings.Join(supportedVersions, ", "))
 	}
 
 	return parser, nil
@@ -70,20 +70,36 @@ type ChangelogEntry struct {
 	Description string `yaml:"description"`
 }
 
+// MediaSpec lists store page images uploaded through /tool/media.
+type MediaSpec struct {
+	Cover     string   `yaml:"cover,omitempty"`
+	Thumbnail string   `yaml:"thumbnail,omitempty"`
+	Gallery   []string `yaml:"gallery,omitempty"`
+}
+
+func (m *MediaSpec) empty() bool {
+	return m == nil || (m.Cover == "" && m.Thumbnail == "" && len(m.Gallery) == 0)
+}
+
 // BuildAsset represents the asset structure for build spec
 type BuildAsset struct {
-	Title       string           `yaml:"title"`
-	Type        string           `yaml:"type"`
-	AssetType   string           `yaml:"asset_type,omitempty"`
-	Description string           `yaml:"description"`
-	Version     string           `yaml:"version"`
-	OS          string           `yaml:"os,omitempty"`
-	Arch        string           `yaml:"arch,omitempty"`
-	Channel     string           `yaml:"channel,omitempty"`
-	Platforms   []PlatformSpec   `yaml:"platforms,omitempty"`
-	Video       string           `yaml:"video,omitempty"`
-	Images      []string         `yaml:"images,omitempty"`
-	Changelog   []ChangelogEntry `yaml:"changelog,omitempty"`
+	Title       string `yaml:"title"`
+	Type        string `yaml:"type"`
+	// AssetType is a deprecated alias for Type.
+	AssetType     string           `yaml:"asset_type,omitempty"`
+	Description   string           `yaml:"description"`
+	Version       string           `yaml:"version"`
+	EngineVersion string           `yaml:"engine_version,omitempty"`
+	OS            string           `yaml:"os,omitempty"`
+	Arch          string           `yaml:"arch,omitempty"`
+	Channel       string           `yaml:"channel,omitempty"`
+	Platforms     []PlatformSpec   `yaml:"platforms,omitempty"`
+	Video         string           `yaml:"video,omitempty"`
+	// Images are added to the gallery; prefer media.gallery.
+	Images    []string         `yaml:"images,omitempty"`
+	Media     *MediaSpec       `yaml:"media,omitempty"`
+	Symbols   string           `yaml:"symbols,omitempty"`
+	Changelog []ChangelogEntry `yaml:"changelog,omitempty"`
 }
 
 // FileEntry represents a single file entry in the files list
@@ -93,13 +109,27 @@ type FileEntry struct {
 
 // FilesAsset represents the asset structure for addfiles spec
 type FilesAsset struct {
-	Type      string      `yaml:"type"`
-	AssetType string      `yaml:"asset_type,omitempty"`
-	Version   string      `yaml:"version"`
-	Channel string      `yaml:"channel"`
-	OS      string      `yaml:"os"`
-	Arch    string      `yaml:"arch"`
-	Files   []FileEntry `yaml:"files"`
+	Type string `yaml:"type"`
+	// AssetType is a deprecated alias for Type.
+	AssetType     string      `yaml:"asset_type,omitempty"`
+	Version       string      `yaml:"version"`
+	EngineVersion string      `yaml:"engine_version,omitempty"`
+	Channel       string      `yaml:"channel"`
+	OS            string      `yaml:"os"`
+	Arch          string      `yaml:"arch"`
+	Symbols       string      `yaml:"symbols,omitempty"`
+	Files         []FileEntry `yaml:"files"`
+}
+
+func warnAssetType(assetType, typ string) string {
+	if assetType == "" {
+		return typ
+	}
+	fmt.Fprintln(stderr, "Warning: asset.asset_type is deprecated; use asset.type.")
+	if typ == "" {
+		return assetType
+	}
+	return typ
 }
 
 // ParsedConfig holds the parsed configuration with typed asset
@@ -131,19 +161,20 @@ func (p *BuildV1Parser) ParseAsset(asset interface{}) (*ParsedConfig, error) {
 
 	// Validate required fields
 	if buildAsset.Title == "" {
-		return nil, fmt.Errorf("missing required field: asset.title")
+		return nil, usageErrorf("missing required field: asset.title")
 	}
+	buildAsset.Type = warnAssetType(buildAsset.AssetType, buildAsset.Type)
 	if buildAsset.Type == "" {
-		buildAsset.Type = buildAsset.AssetType
-	}
-	if buildAsset.Type == "" {
-		return nil, fmt.Errorf("missing required field: asset.type")
+		return nil, usageErrorf("missing required field: asset.type")
 	}
 	if buildAsset.Description == "" {
-		return nil, fmt.Errorf("missing required field: asset.description")
+		return nil, usageErrorf("missing required field: asset.description")
 	}
 	if buildAsset.Version == "" {
-		return nil, fmt.Errorf("missing required field: asset.version")
+		return nil, usageErrorf("missing required field: asset.version")
+	}
+	if err := validateBuildAsset(&buildAsset); err != nil {
+		return nil, err
 	}
 
 	parsed.BuildAsset = &buildAsset
@@ -170,47 +201,113 @@ func (p *AddFilesV1Parser) ParseAsset(asset interface{}) (*ParsedConfig, error) 
 	}
 
 	// Validate required fields
+	filesAsset.Type = warnAssetType(filesAsset.AssetType, filesAsset.Type)
 	if filesAsset.Type == "" {
-		filesAsset.Type = filesAsset.AssetType
-	}
-	if filesAsset.Type == "" {
-		return nil, fmt.Errorf("missing required field: asset.type")
+		return nil, usageErrorf("missing required field: asset.type")
 	}
 	if filesAsset.Version == "" {
-		return nil, fmt.Errorf("missing required field: asset.version")
+		return nil, usageErrorf("missing required field: asset.version")
 	}
 	if filesAsset.Channel == "" {
-		return nil, fmt.Errorf("missing required field: asset.channel")
+		return nil, usageErrorf("missing required field: asset.channel")
 	}
 	if filesAsset.OS == "" {
-		return nil, fmt.Errorf("missing required field: asset.os")
+		return nil, usageErrorf("missing required field: asset.os")
 	}
 	if filesAsset.Arch == "" {
-		return nil, fmt.Errorf("missing required field: asset.arch")
+		return nil, usageErrorf("missing required field: asset.arch")
 	}
 	if len(filesAsset.Files) == 0 {
-		return nil, fmt.Errorf("missing required field: asset.files (must have at least one file)")
+		return nil, usageErrorf("missing required field: asset.files (must have at least one file)")
+	}
+	if err := validateFilesAsset(&filesAsset); err != nil {
+		return nil, err
 	}
 
 	parsed.FilesAsset = &filesAsset
 	return parsed, nil
 }
 
+// validateBuildAsset normalizes and checks everything in a build spec that
+// can be checked without the network.
+func validateBuildAsset(a *BuildAsset) error {
+	if err := validateBuildFields(a); err != nil {
+		return err
+	}
+	ev, err := validateEngineVersion(a.EngineVersion)
+	if err != nil {
+		return err
+	}
+	a.EngineVersion = ev
+	for i, p := range a.Platforms {
+		if p.OS == "" {
+			return usageErrorf("asset.platforms[%d].os is required (%s)", i, osHelp)
+		}
+		if p.Arch == "" {
+			p.Arch = "x86_64"
+		}
+		spec, err := validatePlatform(p.OS, p.Arch, p.Channel)
+		if err != nil {
+			return usageErrorf("asset.platforms[%d]: %v", i, err)
+		}
+		a.Platforms[i] = spec
+	}
+	if a.OS != "" {
+		arch := a.Arch
+		if arch == "" {
+			arch = "x86_64"
+		}
+		spec, err := validatePlatform(a.OS, arch, a.Channel)
+		if err != nil {
+			return err
+		}
+		a.OS, a.Arch, a.Channel = spec.OS, spec.Arch, spec.Channel
+	}
+	if n := len(a.Images) + galleryLen(a.Media); n > maxGalleryImages {
+		return usageErrorf("images and media.gallery list %d images; the gallery holds at most %d", n, maxGalleryImages)
+	}
+	return nil
+}
+
+func galleryLen(m *MediaSpec) int {
+	if m == nil {
+		return 0
+	}
+	return len(m.Gallery)
+}
+
+func validateFilesAsset(a *FilesAsset) error {
+	if len(a.Version) > maxVersionLen {
+		return usageErrorf("version must be at most %d characters", maxVersionLen)
+	}
+	ev, err := validateEngineVersion(a.EngineVersion)
+	if err != nil {
+		return err
+	}
+	a.EngineVersion = ev
+	spec, err := validatePlatform(a.OS, a.Arch, a.Channel)
+	if err != nil {
+		return err
+	}
+	a.OS, a.Arch, a.Channel = spec.OS, spec.Arch, spec.Channel
+	return nil
+}
+
 // ParseYAML parses the YAML file and returns a ParsedConfig
 func ParseYAML(filename string) (*ParsedConfig, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+		return nil, usageErrorf("failed to read %s: %v", filename, err)
 	}
 
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+		return nil, usageErrorf("failed to parse YAML: %v", err)
 	}
 
 	// Validate spec
 	if config.Spec != "build" && config.Spec != "addfiles" {
-		return nil, fmt.Errorf("invalid spec: %s (expected 'build' or 'addfiles')", config.Spec)
+		return nil, usageErrorf("invalid spec: %s (expected 'build' or 'addfiles')", config.Spec)
 	}
 
 	// Get the appropriate parser for this spec and version

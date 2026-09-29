@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 // PlatformSpec is one OS/arch/channel triple. Each gets its own build_id.
 type PlatformSpec struct {
 	OS      string `yaml:"os"`
@@ -59,19 +57,19 @@ func responseBuildID(data map[string]interface{}) string {
 func printBuildIDs(data map[string]interface{}, p PlatformSpec) {
 	buildID := responseBuildID(data)
 	appID, _ := data["app_id"].(string)
-	fmt.Println("Build ready for crash reporters and CI.")
+	logln("Build ready for crash reporters and CI.")
 	if p.OS != "" {
-		fmt.Printf("  platform: %s/%s", p.OS, p.Arch)
+		logf("  platform: %s/%s", p.OS, p.Arch)
 		if p.Channel != "" {
-			fmt.Printf("  channel=%s", p.Channel)
+			logf("  channel=%s", p.Channel)
 		}
-		fmt.Println()
+		logln()
 	}
 	if appID != "" {
-		fmt.Printf("  app_id:   %s\n", appID)
-		fmt.Printf("  BLAZIUM_GAMES_APP_ID=%s\n", appID)
+		logf("  app_id:   %s\n", appID)
+		logf("  BLAZIUM_GAMES_APP_ID=%s\n", appID)
 	}
-	fmt.Printf("  build_id: %s\n", buildID)
-	fmt.Printf("  BLAZIUM_GAMES_BUILD_ID=%s\n", buildID)
-	fmt.Printf("  Crash reporter: X-App-Id=%s X-Build-Id=%s\n", appID, buildID)
+	logf("  build_id: %s\n", buildID)
+	logf("  BLAZIUM_GAMES_BUILD_ID=%s\n", buildID)
+	logf("  Crash reporter: X-App-Id=%s X-Build-Id=%s\n", appID, buildID)
 }
