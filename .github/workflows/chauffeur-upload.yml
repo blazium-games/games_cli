@@ -38,8 +38,17 @@ jobs:
           unformatted=$(gofmt -l $(git ls-files '*.go'))
           if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
 
+      - name: Staticcheck and govulncheck
+        if: runner.os == 'Linux'
+        run: |
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+      # The race detector needs cgo, which the Windows runner doesn't set up.
       - name: Vet and test
-        run: go vet ./... && go test ./...
+        run: |
+          go vet ./...
+          if [ "$RUNNER_OS" = Windows ]; then go test ./...; else go test -race ./...; fi
 
   build-and-upload:
     needs: test

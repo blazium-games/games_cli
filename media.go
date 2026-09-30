@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -414,30 +413,4 @@ func init() {
 	mediaMoveCmd.Flags().Int("to", -1, "New gallery index (0 is first)")
 	_ = mediaMoveCmd.MarkFlagRequired("to")
 	mediaCmd.AddCommand(mediaListCmd, singleImageCmd("cover"), singleImageCmd("thumbnail"), mediaAddCmd, mediaDeleteCmd, mediaMoveCmd, mediaOrderCmd)
-}
-
-// imageFiles expands directories into the images inside them, sorted by name.
-func imageFiles(paths []string) ([]string, error) {
-	var out []string
-	for _, p := range paths {
-		st, err := os.Stat(p)
-		if err != nil {
-			return nil, usageErrorf("cannot read %s: %v", p, err)
-		}
-		if !st.IsDir() {
-			out = append(out, p)
-			continue
-		}
-		entries, err := os.ReadDir(p)
-		if err != nil {
-			return nil, usageErrorf("cannot read %s: %v", p, err)
-		}
-		for _, e := range entries {
-			ext := strings.ToLower(filepath.Ext(e.Name()))
-			if !e.IsDir() && (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".webp") {
-				out = append(out, filepath.Join(p, e.Name()))
-			}
-		}
-	}
-	return out, nil
 }

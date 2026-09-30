@@ -2,6 +2,8 @@ module chauffeur
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/sirupsen/logrus v1.9.3
