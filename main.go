@@ -57,10 +57,13 @@ func addAppFlags(cmd *cobra.Command) {
 	cmd.Flags().String("app-name", "", "Display name for the app, shown on the downloads page (needs an app id)")
 }
 
-func appFromCmd(cmd *cobra.Command, current *AppSpec) *AppSpec {
+func appFromCmd(cmd *cobra.Command, current *AppSpec) (*AppSpec, error) {
 	id, _ := cmd.Flags().GetString("app")
 	name, _ := cmd.Flags().GetString("app-name")
-	return appFromFlags(current, id, name)
+	if strings.TrimSpace(name) != "" && strings.TrimSpace(id) == "" && strings.TrimSpace(current.id()) == "" {
+		return nil, usageErrorf("--app-name needs --app (or asset.app.id in the file)")
+	}
+	return appFromFlags(current, id, name), nil
 }
 
 const platformFlagHelp = "\n\nPlatform values:\n  os       " + "windows, macos, linux, android, ios, web" +
@@ -115,7 +118,9 @@ before anything is sent.` + platformFlagHelp + "\n\n" + authHelp,
 		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
 			a.Symbols = v
 		}
-		a.App = appFromCmd(cmd, a.App)
+		if a.App, err = appFromCmd(cmd, a.App); err != nil {
+			return err
+		}
 		client, err := deployClient(cmd)
 		if err != nil {
 			return err
@@ -167,7 +172,9 @@ Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platform
 		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
 			a.Symbols = v
 		}
-		a.App = appFromCmd(cmd, a.App)
+		if a.App, err = appFromCmd(cmd, a.App); err != nil {
+			return err
+		}
 		client, err := deployClient(cmd)
 		if err != nil {
 			return err
@@ -206,7 +213,10 @@ the images in a directory to media.gallery.`,
 			media = &MediaSpec{Gallery: images}
 			logf("Found %d image(s) in directory\n", len(images))
 		}
-		app := appFromCmd(cmd, nil)
+		app, err := appFromCmd(cmd, nil)
+		if err != nil {
+			return err
+		}
 		if err := validateApp(app); err != nil {
 			return err
 		}
@@ -320,7 +330,10 @@ var setfilesCmd = &cobra.Command{
 			}
 			logf("Found %d file(s) in directory\n", len(fileEntries))
 		}
-		app := appFromCmd(cmd, nil)
+		app, err := appFromCmd(cmd, nil)
+		if err != nil {
+			return err
+		}
 		if err := validateApp(app); err != nil {
 			return err
 		}

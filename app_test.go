@@ -1,7 +1,10 @@
 package main
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestParseAppSpec(t *testing.T) {
@@ -91,6 +94,21 @@ func TestAppAddToAndFlags(t *testing.T) {
 	}
 	if got := appFromFlags(nil, "server", "Dedicated"); got.ID != "server" || got.Name != "Dedicated" {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAppNameFlagNeedsAnApp(t *testing.T) {
+	cmd := &cobra.Command{}
+	addAppFlags(cmd)
+	if err := cmd.Flags().Set("app-name", "Dedicated"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appFromCmd(cmd, nil); err == nil || !strings.Contains(err.Error(), "--app-name needs --app") {
+		t.Fatalf("expected an --app-name error, got %v", err)
+	}
+	got, err := appFromCmd(cmd, &AppSpec{ID: "server"})
+	if err != nil || got.ID != "server" || got.Name != "Dedicated" {
+		t.Fatalf("the file's app id should satisfy --app-name, got %+v %v", got, err)
 	}
 }
 
