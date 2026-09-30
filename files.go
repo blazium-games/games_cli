@@ -67,7 +67,7 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 
 	logln("Uploading file...")
 	data, err := uploadBuildFile(client, buildFileUpload{
-		Path: tempZip, Size: st.Size(), Checksum: checksum, BuildID: buildID, Platform: platform,
+		Path: tempZip, Size: st.Size(), Checksum: checksum, BuildID: buildID, Platform: platform, App: asset.App.id(),
 	})
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 	status, _ := data["status"].(string)
 	logf("File uploaded. File UID: %s, status: %s\n", fileUID, status)
 
-	result := buildResult{BuildID: buildID, AppID: appID, OS: platform.OS, Arch: platform.Arch,
+	result := buildResult{BuildID: buildID, AppID: appID, App: asset.App.id(), OS: platform.OS, Arch: platform.Arch,
 		Channel: platform.Channel, FileUID: fileUID, Checksum: checksum}
 	if asset.Symbols != "" {
 		sym, err := uploadSymbols(client, buildID, asset.Symbols)
@@ -99,7 +99,7 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 // chauffeur build) is reused as is: registering it again would replace its
 // title, description and changelog.
 func platformBuild(client *Client, asset *FilesAsset, p PlatformSpec) (map[string]any, error) {
-	if existing := findBuild(client, asset.Type, asset.Version, p); existing != nil {
+	if existing := findBuild(client, asset.Type, asset.Version, asset.App.id(), p); existing != nil {
 		logf("Using the existing %s build for %s/%s (%s).\n", asset.Version, p.OS, p.Arch, p.Channel)
 		if ev, _ := existing["engine_version"].(string); asset.EngineVersion != "" && ev != asset.EngineVersion {
 			logf("Warning: engine_version %s differs from the registered build's %q; set it in build.yml and run chauffeur build to change it.\n", asset.EngineVersion, ev)
@@ -120,6 +120,7 @@ func platformBuild(client *Client, asset *FilesAsset, p PlatformSpec) (map[strin
 	if asset.EngineVersion != "" {
 		buildReq["engine_version"] = asset.EngineVersion
 	}
+	asset.App.addTo(buildReq)
 	logln("Creating platform build...")
 	resp, err := client.PostJSON("/tool/upload/build", buildReq)
 	if err != nil {
@@ -131,10 +132,10 @@ func platformBuild(client *Client, asset *FilesAsset, p PlatformSpec) (map[strin
 	return resp.Data, nil
 }
 
-// findBuild looks up a build with exactly this version, type and platform.
+// findBuild looks up a build with exactly this app, version, type and platform.
 // Lookup failures fall back to registering the build.
-func findBuild(client *Client, typ, version string, p PlatformSpec) map[string]any {
-	q := url.Values{"version": {version}, "os": {p.OS}, "arch": {p.Arch}, "channel": {p.Channel}, "page_size": {"100"}}
+func findBuild(client *Client, typ, version, app string, p PlatformSpec) map[string]any {
+	q := url.Values{"version": {version}, "os": {p.OS}, "arch": {p.Arch}, "channel": {p.Channel}, "app": {app}, "page_size": {"100"}}
 	resp, err := client.GetJSON("/tool/builds?" + q.Encode())
 	if err != nil {
 		return nil
@@ -145,7 +146,8 @@ func findBuild(client *Client, typ, version string, p PlatformSpec) map[string]a
 		if b == nil || responseBuildID(b) == "" {
 			continue
 		}
-		if b["version"] == version && b["build_type"] == typ && b["os"] == p.OS && b["arch"] == p.Arch && b["channel"] == p.Channel {
+		buildApp, _ := b["app"].(string)
+		if b["version"] == version && b["build_type"] == typ && b["os"] == p.OS && b["arch"] == p.Arch && b["channel"] == p.Channel && buildApp == app {
 			return b
 		}
 	}

@@ -50,6 +50,22 @@ Docs: https://blazium-games.github.io/games_docs/docs/cli`,
 	SilenceErrors: true,
 }
 
+// addAppFlags registers --app and --app-name, which pick the project's app
+// (for example a dedicated server) that the build belongs to.
+func addAppFlags(cmd *cobra.Command) {
+	cmd.Flags().String("app", "", "App id within the project: 1-32 lowercase letters, digits or dashes (default: the main app)")
+	cmd.Flags().String("app-name", "", "Display name for the app, shown on the downloads page (needs an app id)")
+}
+
+func appFromCmd(cmd *cobra.Command, current *AppSpec) (*AppSpec, error) {
+	id, _ := cmd.Flags().GetString("app")
+	name, _ := cmd.Flags().GetString("app-name")
+	if strings.TrimSpace(name) != "" && strings.TrimSpace(id) == "" && strings.TrimSpace(current.id()) == "" {
+		return nil, usageErrorf("--app-name needs --app (or asset.app.id in the file)")
+	}
+	return appFromFlags(current, id, name), nil
+}
+
 const platformFlagHelp = "\n\nPlatform values:\n  os       " + "windows, macos, linux, android, ios, web" +
 	"\n  arch     x86_64, x86, arm64, arm32, arm, universal, wasm32, wasm" +
 	"\n  channel  1-32 lowercase letters, digits, - or _ (default stable)"
@@ -102,6 +118,9 @@ before anything is sent.` + platformFlagHelp + "\n\n" + authHelp,
 		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
 			a.Symbols = v
 		}
+		if a.App, err = appFromCmd(cmd, a.App); err != nil {
+			return err
+		}
 		client, err := deployClient(cmd)
 		if err != nil {
 			return err
@@ -153,6 +172,9 @@ Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platform
 		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
 			a.Symbols = v
 		}
+		if a.App, err = appFromCmd(cmd, a.App); err != nil {
+			return err
+		}
 		client, err := deployClient(cmd)
 		if err != nil {
 			return err
@@ -191,6 +213,13 @@ the images in a directory to media.gallery.`,
 			media = &MediaSpec{Gallery: images}
 			logf("Found %d image(s) in directory\n", len(images))
 		}
+		app, err := appFromCmd(cmd, nil)
+		if err != nil {
+			return err
+		}
+		if err := validateApp(app); err != nil {
+			return err
+		}
 		config := &Config{
 			Version: "v1",
 			Spec:    "build",
@@ -200,6 +229,7 @@ the images in a directory to media.gallery.`,
 				Description:   "No description provided",
 				Version:       ver,
 				EngineVersion: engine,
+				App:           app,
 				Media:         media,
 				Changelog:     []ChangelogEntry{},
 			},
@@ -300,6 +330,13 @@ var setfilesCmd = &cobra.Command{
 			}
 			logf("Found %d file(s) in directory\n", len(fileEntries))
 		}
+		app, err := appFromCmd(cmd, nil)
+		if err != nil {
+			return err
+		}
+		if err := validateApp(app); err != nil {
+			return err
+		}
 		config := &Config{
 			Version: "v1",
 			Spec:    "addfiles",
@@ -307,6 +344,7 @@ var setfilesCmd = &cobra.Command{
 				Type:          assetType,
 				Version:       ver,
 				EngineVersion: engine,
+				App:           app,
 				Channel:       p.Channel,
 				OS:            p.OS,
 				Arch:          p.Arch,
@@ -351,6 +389,7 @@ func init() {
 	buildCmd.Flags().String("channel", "", channelUsage)
 	buildCmd.Flags().String("engine-version", "", engineUsage)
 	buildCmd.Flags().String("symbols", "", symbolsUsage+" (needs a single platform)")
+	addAppFlags(buildCmd)
 
 	addfilesCmd.Flags().StringVarP(&assetFile, "asset", "", "", "Path to addfiles.yml (required)")
 	addfilesCmd.Flags().String("os", "", osUsage)
@@ -358,10 +397,12 @@ func init() {
 	addfilesCmd.Flags().String("channel", "", channelUsage)
 	addfilesCmd.Flags().String("engine-version", "", engineUsage)
 	addfilesCmd.Flags().String("symbols", "", symbolsUsage)
+	addAppFlags(addfilesCmd)
 
 	genbuildCmd.Flags().String("images", "", "Directory of gallery images to add (PNG, JPEG, GIF, WebP)")
 	genbuildCmd.Flags().String("version", "", "Build version (default 0.0.1, at most 32 characters)")
 	genbuildCmd.Flags().String("engine-version", "", engineUsage)
+	addAppFlags(genbuildCmd)
 
 	addchangelogCmd.Flags().String("title", "", "Changelog entry title (required)")
 	addchangelogCmd.Flags().String("description", "", "Changelog entry description (required)")
@@ -374,6 +415,7 @@ func init() {
 	setfilesCmd.Flags().String("files", "", "Directory of files to add")
 	setfilesCmd.Flags().String("engine-version", "", engineUsage)
 	setfilesCmd.Flags().String("symbols", "", symbolsUsage)
+	addAppFlags(setfilesCmd)
 
 	buildCmd.MarkFlagRequired("asset")
 	addfilesCmd.MarkFlagRequired("asset")
