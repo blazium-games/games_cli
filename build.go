@@ -4,6 +4,7 @@ package main
 type buildResult struct {
 	BuildID  string `json:"build_id"`
 	AppID    string `json:"app_id,omitempty"`
+	App      string `json:"app,omitempty"`
 	OS       string `json:"os,omitempty"`
 	Arch     string `json:"arch,omitempty"`
 	Channel  string `json:"channel,omitempty"`
@@ -59,6 +60,7 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 		if asset.EngineVersion != "" {
 			buildReq["engine_version"] = asset.EngineVersion
 		}
+		asset.App.addTo(buildReq)
 		if asset.Video != "" {
 			buildReq["demo_url"] = asset.Video
 		}
@@ -81,7 +83,7 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 		}
 		printBuildIDs(resp.Data, p)
 		appID, _ := resp.Data["app_id"].(string)
-		results = append(results, buildResult{BuildID: buildUID, AppID: appID, OS: p.OS, Arch: p.Arch, Channel: p.Channel})
+		results = append(results, buildResult{BuildID: buildUID, AppID: appID, App: asset.App.id(), OS: p.OS, Arch: p.Arch, Channel: p.Channel})
 	}
 
 	if asset.Symbols != "" {

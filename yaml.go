@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -81,10 +82,77 @@ func (m *MediaSpec) empty() bool {
 	return m == nil || (m.Cover == "" && m.Thumbnail == "" && len(m.Gallery) == 0)
 }
 
+// AppSpec names one app of a project, such as a game's level editor. Leave it
+// out for the project's main app.
+type AppSpec struct {
+	ID   string `yaml:"id"`
+	Name string `yaml:"name,omitempty"`
+}
+
+var appIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// validateApp normalizes the app id; a nil or empty app is the main app.
+func validateApp(a *AppSpec) error {
+	if a == nil {
+		return nil
+	}
+	a.ID, a.Name = strings.ToLower(strings.TrimSpace(a.ID)), strings.TrimSpace(a.Name)
+	if a.ID == "" {
+		if a.Name != "" {
+			return usageErrorf("asset.app.name needs asset.app.id")
+		}
+		return nil
+	}
+	if !appIDRe.MatchString(a.ID) {
+		return usageErrorf("asset.app.id must be 1-32 lowercase letters, digits or dashes (got %q)", a.ID)
+	}
+	if len([]rune(a.Name)) > 80 {
+		return usageErrorf("asset.app.name is limited to 80 characters")
+	}
+	return nil
+}
+
+func (a *AppSpec) id() string {
+	if a == nil {
+		return ""
+	}
+	return a.ID
+}
+
+// addTo sets app and app_name on a build request when the build belongs to a non-main app.
+func (a *AppSpec) addTo(req map[string]any) {
+	if a.id() == "" {
+		return
+	}
+	req["app"] = a.ID
+	if a.Name != "" {
+		req["app_name"] = a.Name
+	}
+}
+
+// appFromFlags applies --app and --app-name over the file's app.
+func appFromFlags(current *AppSpec, id, name string) *AppSpec {
+	if id == "" && name == "" {
+		return current
+	}
+	out := &AppSpec{}
+	if current != nil {
+		*out = *current
+	}
+	if id != "" {
+		out.ID = id
+	}
+	if name != "" {
+		out.Name = name
+	}
+	return out
+}
+
 // BuildAsset represents the asset structure for build spec
 type BuildAsset struct {
-	Title string `yaml:"title"`
-	Type  string `yaml:"type"`
+	Title string   `yaml:"title"`
+	Type  string   `yaml:"type"`
+	App   *AppSpec `yaml:"app,omitempty"`
 	// AssetType is a deprecated alias for Type.
 	AssetType     string         `yaml:"asset_type,omitempty"`
 	Description   string         `yaml:"description"`
@@ -109,7 +177,8 @@ type FileEntry struct {
 
 // FilesAsset represents the asset structure for addfiles spec
 type FilesAsset struct {
-	Type string `yaml:"type"`
+	Type string   `yaml:"type"`
+	App  *AppSpec `yaml:"app,omitempty"`
 	// AssetType is a deprecated alias for Type.
 	AssetType     string      `yaml:"asset_type,omitempty"`
 	Version       string      `yaml:"version"`
@@ -234,6 +303,9 @@ func validateBuildAsset(a *BuildAsset) error {
 	if err := validateBuildFields(a); err != nil {
 		return err
 	}
+	if err := validateApp(a.App); err != nil {
+		return err
+	}
 	ev, err := validateEngineVersion(a.EngineVersion)
 	if err != nil {
 		return err
@@ -279,6 +351,9 @@ func galleryLen(m *MediaSpec) int {
 func validateFilesAsset(a *FilesAsset) error {
 	if len(a.Version) > maxVersionLen {
 		return usageErrorf("version must be at most %d characters", maxVersionLen)
+	}
+	if err := validateApp(a.App); err != nil {
+		return err
 	}
 	ev, err := validateEngineVersion(a.EngineVersion)
 	if err != nil {

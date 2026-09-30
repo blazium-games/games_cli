@@ -25,16 +25,21 @@ type buildFileUpload struct {
 	Checksum string
 	BuildID  string
 	Platform PlatformSpec
+	App      string
 }
 
 func (u buildFileUpload) fields() []formField {
-	return []formField{
+	out := []formField{
 		{"build_id", u.BuildID},
 		{"os", u.Platform.OS},
 		{"arch", u.Platform.Arch},
 		{"channel", u.Platform.Channel},
 		{"checksum", u.Checksum},
 	}
+	if u.App != "" {
+		out = append(out, formField{"app", u.App})
+	}
+	return out
 }
 
 // uploadBuildFile sends one zip: a single streamed request up to 64 MB,
