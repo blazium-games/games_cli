@@ -27,17 +27,67 @@ const (
 	maxChangelogItems = 100
 	maxDemoURLLen     = 255
 
-	maxImageBytes        = 10 << 20
-	minImageSide         = 512
-	maxImageSide         = 2048
 	maxGalleryImages     = 20
 	maxGalleryPerRequest = 10
+
+	wideRatioMin = 1.70
+	wideRatioMax = 1.85
 
 	maxSymbolFileBytes   = 512 << 20
 	maxSymbolUploadBytes = 1 << 30
 	maxSymbolZipBytes    = 2 << 30
 	maxSymbolsPerUpload  = 200
 )
+
+// imageSlot mirrors one games_service upload slot. Wide slots are 16:9
+// (ratio 1.70-1.85). The avatar is square (0.95-1.05).
+type imageSlot struct {
+	name                   string
+	minW, minH, maxW, maxH int
+	ratioMin, ratioMax     float64
+	maxBytes               int64
+}
+
+var (
+	slotThumbnail  = imageSlot{"thumbnail", 960, 540, 1920, 1080, wideRatioMin, wideRatioMax, 5 << 20}
+	slotCover      = imageSlot{"cover", 1024, 576, 2048, 1152, wideRatioMin, wideRatioMax, 8 << 20}
+	slotScreenshot = imageSlot{"screenshot", 1280, 720, 2048, 1152, wideRatioMin, wideRatioMax, 10 << 20}
+	slotAvatar     = imageSlot{"avatar", 256, 256, 512, 512, 0.95, 1.05, 2 << 20}
+)
+
+func (s imageSlot) article() string {
+	if s.name == "avatar" {
+		return "an avatar"
+	}
+	return "a " + s.name
+}
+
+func (s imageSlot) shape() string {
+	if s.name == "avatar" {
+		return "square"
+	}
+	return "16:9"
+}
+
+func imageByteText(n int64) string {
+	if n > 0 && n%(1<<20) == 0 {
+		return fmt.Sprintf("%d MB", n>>20)
+	}
+	return sizeText(n)
+}
+
+func slotForKind(kind string) imageSlot {
+	switch kind {
+	case "cover":
+		return slotCover
+	case "thumbnail":
+		return slotThumbnail
+	case "avatar":
+		return slotAvatar
+	default:
+		return slotScreenshot
+	}
+}
 
 var (
 	allowedOS       = []string{"windows", "macos", "linux", "android", "ios", "web"}

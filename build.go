@@ -33,8 +33,8 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 		}
 		up.cleanup()
 	}
-	for _, p := range append(append([]string{}, asset.Images...), mediaPaths(asset.Media)...) {
-		if err := checkImage(p); err != nil {
+	for _, img := range buildImages(asset.Media, asset.Images) {
+		if err := checkImage(img.path, img.slot); err != nil {
 			return err
 		}
 	}
@@ -118,16 +118,29 @@ func ProcessBuild(client *Client, config *ParsedConfig) error {
 	return nil
 }
 
-func mediaPaths(m *MediaSpec) []string {
-	if m == nil {
-		return nil
+type slotImage struct {
+	path string
+	slot imageSlot
+}
+
+// buildImages pairs each image in a build spec with the slot games_service checks
+// it against: the cover and thumbnail have their own sizes, and gallery images
+// (including the legacy images list) are screenshots.
+func buildImages(m *MediaSpec, legacyImages []string) []slotImage {
+	var out []slotImage
+	if m != nil {
+		if m.Cover != "" {
+			out = append(out, slotImage{m.Cover, slotCover})
+		}
+		if m.Thumbnail != "" {
+			out = append(out, slotImage{m.Thumbnail, slotThumbnail})
+		}
+		for _, p := range m.Gallery {
+			out = append(out, slotImage{p, slotScreenshot})
+		}
 	}
-	var out []string
-	if m.Cover != "" {
-		out = append(out, m.Cover)
+	for _, p := range legacyImages {
+		out = append(out, slotImage{p, slotScreenshot})
 	}
-	if m.Thumbnail != "" {
-		out = append(out, m.Thumbnail)
-	}
-	return append(out, m.Gallery...)
+	return out
 }

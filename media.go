@@ -21,8 +21,8 @@ import (
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
 // checkImage validates one image the way games_service does: type sniffed from
-// the bytes (not the extension), at most 10 MB, 512-2048 px per side.
-func checkImage(path string) error {
+// the bytes (not the extension), then the slot's pixel bounds, aspect and file size.
+func checkImage(path string, slot imageSlot) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return usageErrorf("cannot open image %s: %v", path, err)
@@ -35,14 +35,14 @@ func checkImage(path string) error {
 	if st.IsDir() {
 		return usageErrorf("%s is a directory, not an image", path)
 	}
-	if st.Size() > maxImageBytes {
-		return usageErrorf("%s is %s; images can be at most 10 MB", path, sizeText(st.Size()))
+	if st.Size() > slot.maxBytes {
+		return usageErrorf("%s is %s; %s must be at most %s", path, sizeText(st.Size()), slot.article(), imageByteText(slot.maxBytes))
 	}
 	head := make([]byte, 512)
 	n, _ := io.ReadFull(f, head)
 	ctype := http.DetectContentType(head[:n])
 	if !imageTypes[ctype] {
-		return usageErrorf("%s is %s; use PNG, JPEG, GIF or WebP", path, ctype)
+		return usageErrorf("%s is %s; %s must be PNG, JPEG, GIF or WebP", path, ctype, slot.article())
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return usageErrorf("cannot read image %s: %v", path, err)
@@ -51,8 +51,15 @@ func checkImage(path string) error {
 	if err != nil {
 		return usageErrorf("%s could not be decoded as an image: %v", path, err)
 	}
-	if cfg.Width < minImageSide || cfg.Height < minImageSide || cfg.Width > maxImageSide || cfg.Height > maxImageSide {
-		return usageErrorf("%s is %dx%d px; each side must be %d-%d px", path, cfg.Width, cfg.Height, minImageSide, maxImageSide)
+	if cfg.Width < slot.minW || cfg.Height < slot.minH {
+		return usageErrorf("%s is %dx%d; %s minimum is %dx%d", path, cfg.Width, cfg.Height, slot.article()+"'s", slot.minW, slot.minH)
+	}
+	if cfg.Width > slot.maxW || cfg.Height > slot.maxH {
+		return usageErrorf("%s is %dx%d; %s maximum is %dx%d", path, cfg.Width, cfg.Height, slot.article()+"'s", slot.maxW, slot.maxH)
+	}
+	ratio := float64(cfg.Width) / float64(cfg.Height)
+	if ratio < slot.ratioMin || ratio > slot.ratioMax {
+		return usageErrorf("%s is %dx%d; %s must be %s", path, cfg.Width, cfg.Height, slot.article(), slot.shape())
 	}
 	return nil
 }
@@ -128,7 +135,7 @@ func addMedia(c *Client, kind string, paths []string, position int) (mediaState,
 		return mediaState{}, usageErrorf("--position must be 0-%d", maxGalleryImages-1)
 	}
 	for _, p := range paths {
-		if err := checkImage(p); err != nil {
+		if err := checkImage(p, slotForKind(kind)); err != nil {
 			return mediaState{}, err
 		}
 	}
@@ -242,10 +249,15 @@ var mediaCmd = &cobra.Command{
 	Short: "Manage store page images (cover, thumbnail, gallery)",
 	Long: `Manage the store page images of the game that owns the deploy key.
 
-Images must be PNG, JPEG, GIF or WebP, 512-2048 px per side and at most 10 MB.
-The type is checked from the file contents, not the extension. The gallery
-holds up to 20 images; a public listing needs at least 4, a cover and a
-thumbnail.
+Images must be PNG, JPEG, GIF or WebP. The type is checked from the file
+contents, not the extension.
+
+  Thumbnail:  960x540 to 1920x1080, 16:9, at most 5 MB.
+  Cover:      1024x576 to 2048x1152, 16:9, at most 8 MB.
+  Screenshot: 1280x720 to 2048x1152, 16:9, at most 10 MB.
+
+The gallery holds up to 20 screenshots; a public listing needs at least 4,
+a cover and a thumbnail.
 
 ` + mediaAuthNote,
 	Example: `  chauffeur media list
