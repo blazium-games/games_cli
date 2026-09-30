@@ -14,7 +14,14 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,6 +33,7 @@ jobs:
           cache: true
 
       - name: Format
+        if: runner.os == 'Linux'
         run: |
           unformatted=$(gofmt -l $(git ls-files '*.go'))
           if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
