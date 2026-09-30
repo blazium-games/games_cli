@@ -26,6 +26,10 @@ type fakeUploader struct {
 	fail503    int // fail this many chunk requests with 503
 	loseOnce   bool
 	chunkCalls int
+	sessions   int
+	current    string
+	expireAt   int  // forget the session once it holds this many bytes
+	failWrite  bool // reject one chunk as unwritten (400 4044 with current_size)
 }
 
 func writeEnvelope(w http.ResponseWriter, status int, data map[string]any, code int, msg string, errData map[string]any) {
@@ -54,7 +58,10 @@ func (f *fakeUploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, k := range []string{"filename", "checksum", "os", "arch", "channel", "build_id", "total_size"} {
 			f.session[k] = r.PostForm.Get(k)
 		}
-		writeEnvelope(w, 201, map[string]any{"session_id": "sess-1", "current_size": 0}, 0, "", nil)
+		f.sessions++
+		f.current = fmt.Sprintf("sess-%d", f.sessions)
+		f.data = nil
+		writeEnvelope(w, 201, map[string]any{"session_id": f.current, "current_size": 0}, 0, "", nil)
 	case r.URL.Path == "/tool/upload/files" && r.Header.Get("X-Upload-Session-ID") == "":
 		mr, err := r.MultipartReader()
 		if err != nil {
@@ -88,6 +95,14 @@ func (f *fakeUploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, 503, nil, 5000, "busy", nil)
 			return
 		}
+		if f.expireAt > 0 && len(f.data) >= f.expireAt {
+			f.expireAt = 0
+			f.current = ""
+		}
+		if r.Header.Get("X-Upload-Session-ID") != f.current {
+			writeEnvelope(w, 404, nil, 4045, "Upload session not found", nil)
+			return
+		}
 		var start, end, total int64
 		if _, err := fmt.Sscanf(r.Header.Get("Content-Range"), "bytes %d-%d/%d", &start, &end, &total); err != nil {
 			writeEnvelope(w, 400, nil, 4044, "bad range", nil)
@@ -112,6 +127,11 @@ func (f *fakeUploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, 400, nil, 4044, "short chunk", nil)
 			return
 		}
+		if f.failWrite && len(f.data) > 0 {
+			f.failWrite = false
+			writeEnvelope(w, 400, nil, 4044, "the chunk could not be written; retry it", map[string]any{"session_id": f.current, "current_size": len(f.data)})
+			return
+		}
 		f.data = append(f.data, b...)
 		acked := len(f.data)
 		if f.loseOnce && len(f.data) > len(b) {
@@ -120,7 +140,7 @@ func (f *fakeUploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.data = f.data[:len(f.data)-len(b)]
 		}
 		if int64(acked) < total {
-			writeEnvelope(w, 202, map[string]any{"session_id": "sess-1", "current_size": acked}, 0, "", nil)
+			writeEnvelope(w, 202, map[string]any{"session_id": f.current, "current_size": acked}, 0, "", nil)
 			return
 		}
 		sum := sha256.Sum256(f.data)
@@ -205,6 +225,62 @@ func TestChunkedUploadResumesAndRetries(t *testing.T) {
 	// 5 chunks, 2 retried 503s, 1 resend after the lost chunk, 1 rejected 409.
 	if fu.chunkCalls < 8 {
 		t.Fatalf("chunk calls = %d; retries or resume did not happen", fu.chunkCalls)
+	}
+}
+
+func TestChunkedUploadReopensLostSession(t *testing.T) {
+	shrinkUploads(t, 1<<10, 64<<10)
+	fu := &fakeUploader{expireAt: 128 << 10}
+	srv := httptest.NewServer(fu)
+	defer srv.Close()
+	const size = 300_000
+	path, sum := randomFile(t, size)
+	data, err := uploadBuildFile(testClient(srv.URL), buildFileUpload{Path: path, Size: size, Checksum: sum, BuildID: "b1", Platform: testPlatform})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data["file_uid"] != "file-2" || fu.sessions != 2 || len(fu.data) != size {
+		t.Fatalf("data = %v, sessions = %d, bytes = %d", data, fu.sessions, len(fu.data))
+	}
+}
+
+func TestChunkedUploadStopsReopeningEventually(t *testing.T) {
+	shrinkUploads(t, 1<<10, 64<<10)
+	fu := &fakeUploader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tool/upload/files" {
+			fu.mu.Lock()
+			fu.chunkCalls++
+			fu.mu.Unlock()
+			writeEnvelope(w, 404, nil, 4045, "Upload session not found", nil)
+			return
+		}
+		fu.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	path, sum := randomFile(t, 100_000)
+	_, err := uploadBuildFile(testClient(srv.URL), buildFileUpload{Path: path, Size: 100_000, Checksum: sum, BuildID: "b1", Platform: testPlatform})
+	if err == nil || !strings.Contains(err.Error(), "4045") {
+		t.Fatalf("err = %v", err)
+	}
+	if fu.sessions != 1+maxSessionReopens {
+		t.Fatalf("opened %d sessions, want %d", fu.sessions, 1+maxSessionReopens)
+	}
+}
+
+func TestChunkedUploadResumesAfterFailedWrite(t *testing.T) {
+	shrinkUploads(t, 1<<10, 64<<10)
+	fu := &fakeUploader{failWrite: true}
+	srv := httptest.NewServer(fu)
+	defer srv.Close()
+	const size = 200_000
+	path, sum := randomFile(t, size)
+	data, err := uploadBuildFile(testClient(srv.URL), buildFileUpload{Path: path, Size: size, Checksum: sum, BuildID: "b1", Platform: testPlatform})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data["file_uid"] != "file-2" || fu.sessions != 1 || len(fu.data) != size {
+		t.Fatalf("data = %v, sessions = %d, bytes = %d", data, fu.sessions, len(fu.data))
 	}
 }
 

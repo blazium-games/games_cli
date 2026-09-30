@@ -19,6 +19,7 @@ var (
 const (
 	maxBuildFileBytes = 5 << 30
 	maxChunkTries     = 5
+	maxSessionReopens = 3
 
 	maxVersionLen     = 32
 	maxTitleLen       = 255

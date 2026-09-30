@@ -91,24 +91,30 @@ func uploadInChunks(c *Client, u buildFileUpload) (map[string]any, error) {
 	}
 	form.Set("filename", filepath.Base(u.Path))
 	form.Set("total_size", strconv.FormatInt(u.Size, 10))
-	opened, err := withRetry("opening the upload session", func() (map[string]any, error) {
-		resp, _, err := c.PostForm(c.filesURL("/tool/upload/sessions"), form)
+	open := func() (string, int64, error) {
+		opened, err := withRetry("opening the upload session", func() (map[string]any, error) {
+			resp, _, err := c.PostForm(c.filesURL("/tool/upload/sessions"), form)
+			if err != nil {
+				return nil, err
+			}
+			return resp.Data, nil
+		})
 		if err != nil {
-			return nil, err
+			return "", 0, err
 		}
-		return resp.Data, nil
-	})
+		id, _ := opened["session_id"].(string)
+		if id == "" {
+			return "", 0, &apiError{Status: 200, Message: "the upload service did not return a session_id"}
+		}
+		logf("  upload session %s (%s in %s chunks)\n", id, sizeText(u.Size), sizeText(chunkBytes))
+		return id, int64Of(opened["current_size"]), nil
+	}
+	sessionID, offset, err := open()
 	if err != nil {
 		return nil, err
 	}
-	sessionID, _ := opened["session_id"].(string)
-	if sessionID == "" {
-		return nil, &apiError{Status: 200, Message: "the upload service did not return a session_id"}
-	}
-	logf("  upload session %s (%s in %s chunks)\n", sessionID, sizeText(u.Size), sizeText(chunkBytes))
 
-	offset := int64Of(opened["current_size"])
-	tries := 0
+	tries, reopened := 0, 0
 	for offset < u.Size {
 		length := min(chunkBytes, u.Size-offset)
 		resp, _, err := c.PostMultipart(c.filesURL("/tool/upload/files"), nil,
@@ -120,7 +126,20 @@ func uploadInChunks(c *Client, u buildFileUpload) (map[string]any, error) {
 		if err != nil {
 			var ae *apiError
 			tries++
-			if errors.As(err, &ae) && ae.Status == 409 && ae.Data != nil && tries < maxChunkTries {
+			isAPI := errors.As(err, &ae)
+			// 4045: the session expired or the server lost it. Start over in a new one.
+			if isAPI && ae.Code == 4045 && reopened < maxSessionReopens {
+				reopened++
+				logf("  the upload session is gone; opening a new one (%d/%d)\n", reopened, maxSessionReopens)
+				if sessionID, offset, err = open(); err != nil {
+					return nil, err
+				}
+				tries = 0
+				continue
+			}
+			// 4044 with current_size: the server has a different amount of the file
+			// than we thought (a lost acknowledgement or a failed write). Resume there.
+			if isAPI && ae.Code == 4044 && (ae.Status == 400 || ae.Status == 409) && ae.Data != nil && tries < maxChunkTries {
 				if cur, ok := ae.Data["current_size"]; ok {
 					offset = int64Of(cur)
 					logf("  resuming at byte %d\n", offset)
