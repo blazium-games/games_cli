@@ -29,22 +29,64 @@ func writePNG(t *testing.T, dir, name string, w, h int) string {
 
 func TestCheckImage(t *testing.T) {
 	dir := t.TempDir()
-	if err := checkImage(writePNG(t, dir, "ok.png", 512, 1024)); err != nil {
-		t.Fatalf("valid image rejected: %v", err)
+	if err := checkImage(writePNG(t, dir, "shot.png", 1280, 720), slotScreenshot); err != nil {
+		t.Fatalf("valid screenshot rejected: %v", err)
 	}
-	if err := checkImage(writePNG(t, dir, "small.png", 256, 600)); err == nil || !strings.Contains(err.Error(), "512-2048") {
-		t.Fatalf("small image: %v", err)
+	if err := checkImage(writePNG(t, dir, "cover.png", 1024, 576), slotCover); err != nil {
+		t.Fatalf("valid cover rejected: %v", err)
 	}
-	if err := checkImage(writePNG(t, dir, "big.png", 2049, 600)); err == nil {
-		t.Fatal("oversized image accepted")
+	if err := checkImage(writePNG(t, dir, "avatar.png", 256, 256), slotAvatar); err != nil {
+		t.Fatalf("valid avatar rejected: %v", err)
+	}
+	if err := checkImage(writePNG(t, dir, "small.png", 959, 540), slotThumbnail); err == nil || !strings.Contains(err.Error(), "minimum is 960x540") {
+		t.Fatalf("small thumbnail: %v", err)
+	}
+	if err := checkImage(writePNG(t, dir, "big.png", 1921, 1080), slotThumbnail); err == nil || !strings.Contains(err.Error(), "maximum is 1920x1080") {
+		t.Fatalf("oversized thumbnail: %v", err)
+	}
+	if err := checkImage(writePNG(t, dir, "wide.png", 1600, 1000), slotThumbnail); err == nil || !strings.Contains(err.Error(), "16:9") {
+		t.Fatalf("wrong aspect: %v", err)
+	}
+	if err := checkImage(writePNG(t, dir, "tall.png", 400, 300), slotAvatar); err == nil || !strings.Contains(err.Error(), "square") {
+		t.Fatalf("avatar aspect: %v", err)
 	}
 	fake := filepath.Join(dir, "fake.png")
 	os.WriteFile(fake, []byte("<html>not an image</html>"), 0o644)
-	if err := checkImage(fake); err == nil || exitCode(err) != exitUsage {
+	if err := checkImage(fake, slotScreenshot); err == nil || exitCode(err) != exitUsage {
 		t.Fatalf("non-image with .png extension: %v", err)
 	}
-	if err := checkImage(dir); err == nil {
+	if err := checkImage(dir, slotScreenshot); err == nil {
 		t.Fatal("directory accepted as image")
+	}
+}
+
+func TestBuildImagesUseEachSlot(t *testing.T) {
+	dir := t.TempDir()
+	cover := writePNG(t, dir, "cover.png", 1024, 576)
+	thumb := writePNG(t, dir, "thumb.png", 960, 540)
+	shot := writePNG(t, dir, "shot.png", 1280, 720)
+	legacy := writePNG(t, dir, "legacy.png", 960, 540)
+	got := buildImages(&MediaSpec{Cover: cover, Thumbnail: thumb, Gallery: []string{shot}}, []string{legacy})
+	want := []slotImage{{cover, slotCover}, {thumb, slotThumbnail}, {shot, slotScreenshot}, {legacy, slotScreenshot}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i].path != want[i].path || got[i].slot.name != want[i].slot.name {
+			t.Fatalf("image %d: got %s as %s, want %s", i, got[i].path, got[i].slot.name, want[i].slot.name)
+		}
+	}
+	// A minimum-size cover and thumbnail pass; the same thumbnail in the gallery is too small for a screenshot.
+	for _, img := range got[:3] {
+		if err := checkImage(img.path, img.slot); err != nil {
+			t.Fatalf("%s as %s: %v", img.path, img.slot.name, err)
+		}
+	}
+	if err := checkImage(got[3].path, got[3].slot); err == nil || !strings.Contains(err.Error(), "minimum is 1280x720") {
+		t.Fatalf("legacy gallery image: %v", err)
+	}
+	if buildImages(nil, nil) != nil {
+		t.Fatal("no media means no images")
 	}
 }
 
@@ -79,7 +121,7 @@ func TestValidateOrder(t *testing.T) {
 
 func TestAddMediaSendsKindAndFiles(t *testing.T) {
 	dir := t.TempDir()
-	imgs := []string{writePNG(t, dir, "1.png", 600, 600), writePNG(t, dir, "2.png", 600, 600)}
+	imgs := []string{writePNG(t, dir, "1.png", 1280, 720), writePNG(t, dir, "2.png", 1920, 1080)}
 	var kind, position string
 	var files int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

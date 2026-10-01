@@ -71,7 +71,7 @@ var codeHints = map[int]string{
 	4049: "symbol files must be Breakpad .sym files with a MODULE header, or a .zip of them.",
 	4096: "the game owner must verify their email on blazium.games before uploading.",
 	4150: "the media request is invalid; kind must be cover, thumbnail or gallery.",
-	4151: "images must be PNG, JPEG, GIF or WebP, 512-2048 px per side and at most 10 MB.",
+	4151: "the image does not match its slot. Thumbnail 960x540 to 1920x1080 (5 MB, 16:9), cover 1024x576 to 2048x1152 (8 MB, 16:9), screenshot 1280x720 to 2048x1152 (10 MB, 16:9), avatar 256x256 to 512x512 (2 MB, square). PNG, JPEG, GIF or WebP.",
 	4152: "the gallery is full (20 images); delete one with chauffeur media delete first.",
 	4153: "a public listing needs a cover and thumbnail; replace it instead of deleting.",
 	4154: "the order must list every gallery image uid exactly once (see chauffeur media list).",
