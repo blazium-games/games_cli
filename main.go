@@ -45,7 +45,7 @@ Exit codes: 0 success, 1 usage or validation error, 2 API error, 3 network
 error after retries. With --json, the result (or error) is one JSON object on
 stdout and progress goes to stderr.
 
-Docs: https://blazium-games.github.io/games_docs/docs/cli`,
+Docs: https://docs.blazium.games/docs/cli`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
