@@ -90,7 +90,7 @@ func slotForKind(kind string) imageSlot {
 }
 
 var (
-	allowedOS       = []string{"windows", "macos", "linux", "android", "ios", "web"}
+	allowedOS       = []string{"windows", "macos", "linux", "android", "ios", "web", "any"}
 	allowedArch     = []string{"x86_64", "x86", "arm64", "arm32", "arm", "universal", "wasm32", "wasm"}
 	channelRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	engineVersionRe = regexp.MustCompile(`^\d+(\.\d+){0,3}(-[a-z0-9.]+)?$`)
