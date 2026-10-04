@@ -10,6 +10,9 @@ func TestValidatePlatform(t *testing.T) {
 	if err != nil || p != (PlatformSpec{OS: "macos", Arch: "arm64", Channel: "stable"}) {
 		t.Fatalf("p=%+v err=%v", p, err)
 	}
+	if p, err := validatePlatform("any", "universal", ""); err != nil || p.OS != "any" {
+		t.Fatalf("content pack platform: p=%+v err=%v", p, err)
+	}
 	for _, bad := range [][3]string{{"beos", "x86_64", ""}, {"linux", "mips", ""}, {"linux", "x86_64", "Beta Channel"}, {"linux", "x86_64", "-beta"}} {
 		if _, err := validatePlatform(bad[0], bad[1], bad[2]); exitCode(err) != exitUsage {
 			t.Fatalf("%v accepted: %v", bad, err)
