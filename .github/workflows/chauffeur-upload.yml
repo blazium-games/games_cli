@@ -248,7 +248,30 @@ jobs:
           stage windows amd64 cli-win32-x64 chauffeur.exe
           stage darwin amd64 cli-darwin-x64 chauffeur
           stage darwin arm64 cli-darwin-arm64 chauffeur
-          cp LICENSE npm/packages/cli/LICENSE
+          stage_docs() {
+            local wrapper="$1"
+            local scope="$2"
+            local dir name rest os cpu
+            for dir in npm/packages/"${wrapper}" npm/packages/"${wrapper}"-*; do
+              cp LICENSE "${dir}/LICENSE"
+              name=$(basename "$dir")
+              if [ "$name" = "$wrapper" ]; then
+                cp README.md "${dir}/README.md"
+                continue
+              fi
+              rest="${name#"${wrapper}"-}"
+              os="${rest%-*}"
+              cpu="${rest#*-}"
+              {
+                echo "This package is the native ${os} ${cpu} binary for ${scope}."
+                echo
+                echo "Install \`${scope}\` instead of this package."
+                echo
+                cat README.md
+              } > "${dir}/README.md"
+            done
+          }
+          stage_docs cli "@blazium-games/cli"
           node npm/stamp-versions.cjs
           for pkg in cli-linux-x64 cli-linux-arm64 cli-win32-x64 cli-darwin-x64 cli-darwin-arm64 cli; do
             npm publish --access public "npm/packages/${pkg}"
