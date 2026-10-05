@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Blazium Games support
+    url: https://github.com/blazium-games/support/issues/new/choose
+    about: Report bugs and request features for the CLI, the store, the launcher, and the docs.

@@ -2,6 +2,7 @@ plan/
 ignore/
 *.md
 !README.md
+!SECURITY.md
 npm/packages/*/bin/*
 !npm/packages/cli/bin/chauffeur.js
 *.exe

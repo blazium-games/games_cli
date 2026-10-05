@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const testSecret = "sk_live_THIS_MUST_NOT_LEAK_1234"
+const testSecret = "test-deploy-secret"
 
 func TestErrorsNeverContainTheSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
