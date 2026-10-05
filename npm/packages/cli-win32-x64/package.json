@@ -1,0 +1,29 @@
+{
+  "name": "@blazium-games/cli-win32-x64",
+  "version": "0.0.0",
+  "description": "Windows x64 binary for @blazium-games/cli.",
+  "repository": "https://github.com/blazium-games/games_cli",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://blazium.games",
+  "bugs": "https://github.com/blazium-games/games_cli/issues",
+  "author": "Blazium Games",
+  "keywords": [
+    "blazium",
+    "chauffeur",
+    "cli"
+  ]
+}

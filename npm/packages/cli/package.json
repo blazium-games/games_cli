@@ -1,0 +1,36 @@
+{
+  "name": "@blazium-games/cli",
+  "version": "0.0.0",
+  "description": "chauffeur, the Blazium Games upload tool for builds, symbols, and store images.",
+  "repository": "https://github.com/blazium-games/games_cli",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "chauffeur": "bin/chauffeur.js"
+  },
+  "files": [
+    "bin/chauffeur.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "@blazium-games/cli-linux-x64": "0.0.0",
+    "@blazium-games/cli-linux-arm64": "0.0.0",
+    "@blazium-games/cli-win32-x64": "0.0.0",
+    "@blazium-games/cli-darwin-x64": "0.0.0",
+    "@blazium-games/cli-darwin-arm64": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://blazium.games",
+  "bugs": "https://github.com/blazium-games/games_cli/issues",
+  "author": "Blazium Games",
+  "keywords": [
+    "blazium",
+    "chauffeur",
+    "cli"
+  ]
+}

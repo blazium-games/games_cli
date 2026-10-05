@@ -50,8 +50,51 @@ jobs:
           go vet ./...
           if [ "$RUNNER_OS" = Windows ]; then go test ./...; else go test -race ./...; fi
 
-  build-and-upload:
+  resolve-version:
     needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      simple_version: ${{ steps.finalize.outputs.simple_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get Version with Bioblaze/game-semver-action
+        id: version
+        uses: Bioblaze/game-semver-action@v10
+        with:
+          personal_github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Finalize version
+        id: finalize
+        run: |
+          set -euo pipefail
+          COMPUTED="${{ steps.version.outputs.simple_version }}"
+          BASE="0.1.0"
+          NPM_LATEST="$(curl -fsSL -H 'Cache-Control: no-cache' https://registry.npmjs.org/@blazium-games%2fcli/latest | jq -r '.version // empty' || true)"
+          if [[ "$NPM_LATEST" == "null" ]]; then
+            NPM_LATEST=""
+          fi
+          CANDIDATE="$(printf '%s\n%s\n' "$COMPUTED" "$BASE" | sort -V | tail -n1)"
+          bump_patch() {
+            local v="$1" major minor patch
+            IFS=. read -r major minor patch <<< "$v"
+            patch="${patch%%[^0-9]*}"
+            echo "${major}.${minor}.$((patch + 1))"
+          }
+          if [[ -n "$NPM_LATEST" ]]; then
+            HIGHER="$(printf '%s\n%s\n' "$CANDIDATE" "$NPM_LATEST" | sort -V | tail -n1)"
+            if [[ "$HIGHER" == "$NPM_LATEST" ]]; then
+              CANDIDATE="$(bump_patch "$NPM_LATEST")"
+            fi
+          fi
+          echo "computed=${COMPUTED} npm_latest=${NPM_LATEST:-none} => ${CANDIDATE}"
+          echo "simple_version=${CANDIDATE}" >> "$GITHUB_OUTPUT"
+
+  build-and-upload:
+    needs: [test, resolve-version]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: production
@@ -80,14 +123,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Generate Semver/w Build SHA
-        id: semver
-        uses: Bioblaze/game-semver-action@v10
-        with:
-          personal_github_token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Write VERSION
-        run: echo "${{ steps.semver.outputs.revision_version }}" > VERSION
+        run: echo "${{ needs.resolve-version.outputs.simple_version }}" > VERSION
 
       - name: Write .env from secret
         env:
@@ -105,7 +142,7 @@ jobs:
       - name: Generate Windows resources
         if: matrix.goos == 'windows'
         env:
-          VERSION: ${{ steps.semver.outputs.revision_version }}
+          VERSION: ${{ needs.resolve-version.outputs.simple_version }}
         run: |
           set -euo pipefail
           go install github.com/tc-hib/go-winres@latest
@@ -128,14 +165,14 @@ jobs:
           ext=""
           [ "$GOOS" = "windows" ] && ext=".exe"
           mkdir -p "dist/${GOOS}-${GOARCH}"
-          go build -trimpath -ldflags "-s -w -X main.version=${{ steps.semver.outputs.revision_version }}" \
+          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.resolve-version.outputs.simple_version }}" \
             -o "dist/${GOOS}-${GOARCH}/chauffeur${ext}" .
 
       - name: Package archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
+          VERSION: ${{ needs.resolve-version.outputs.simple_version }}
         run: |
           set -euo pipefail
           bin="chauffeur"
@@ -151,7 +188,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.semver.outputs.revision_version }}
+          VERSION: ${{ needs.resolve-version.outputs.simple_version }}
         run: |
           set -euo pipefail
           archive="artifacts/${TOOL_NAME}/${GOOS}-${GOARCH}/${VERSION}/archive/default"
@@ -161,4 +198,58 @@ jobs:
               --path "tools/${TOOL_NAME}/${GOOS}-${GOARCH}/${dest}/archive/" \
               --acl public-read \
               --storage STANDARD
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chauffeur-${{ matrix.goos }}-${{ matrix.arch }}
+          path: dist/${{ matrix.goos }}-${{ matrix.arch }}/chauffeur*
+          if-no-files-found: error
+
+  publish-npm:
+    needs: [build-and-upload, resolve-version]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chauffeur-*
+          path: dist/bins
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Stage binaries and publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
+          BLAZIUM_GAMES_CLI_VERSION: ${{ needs.resolve-version.outputs.simple_version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_ACCESS_TOKEN is missing on blazium-games/games_cli. Publish fails until an admin copies the existing npm token onto this repo." >&2
+            exit 1
+          fi
+          stage() {
+            local goos="$1" arch="$2" pkg="$3" exe="$4"
+            local src
+            src="$(find "dist/bins/chauffeur-${goos}-${arch}" -type f -name "$exe" | head -n 1)"
+            test -n "$src"
+            mkdir -p "npm/packages/${pkg}/bin"
+            cp "$src" "npm/packages/${pkg}/bin/${exe}"
+            cp LICENSE "npm/packages/${pkg}/LICENSE"
+          }
+          stage linux amd64 cli-linux-x64 chauffeur
+          stage linux arm64 cli-linux-arm64 chauffeur
+          stage windows amd64 cli-win32-x64 chauffeur.exe
+          stage darwin amd64 cli-darwin-x64 chauffeur
+          stage darwin arm64 cli-darwin-arm64 chauffeur
+          cp LICENSE npm/packages/cli/LICENSE
+          node npm/stamp-versions.cjs
+          for pkg in cli-linux-x64 cli-linux-arm64 cli-win32-x64 cli-darwin-x64 cli-darwin-arm64 cli; do
+            npm publish --access public "npm/packages/${pkg}"
           done
