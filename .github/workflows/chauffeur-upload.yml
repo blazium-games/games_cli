@@ -200,7 +200,7 @@ jobs:
               --storage STANDARD
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: chauffeur-${{ matrix.goos }}-${{ matrix.arch }}
           path: dist/${{ matrix.goos }}-${{ matrix.arch }}/chauffeur*
@@ -214,12 +214,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: chauffeur-*
           path: dist/bins
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
