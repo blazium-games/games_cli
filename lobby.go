@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,9 @@ import (
 
 var lobbyDir string
 var lobbyTypeFlag string
+var lobbySetEnabled string
+var lobbySetType string
+var lobbySetIce string
 
 var lobbyCmd = &cobra.Command{
 	Use:   "lobby",
@@ -56,10 +60,25 @@ var lobbyStatusCmd = &cobra.Command{
 	},
 }
 
+var lobbySetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Turn the lobby on, choose relay or scripted, and switch TURN",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := deployClient(cmd)
+		if err != nil {
+			return err
+		}
+		return runLobbySet(client, lobbySetEnabled, lobbySetType, lobbySetIce)
+	},
+}
+
 func init() {
 	lobbyPublishCmd.Flags().StringVar(&lobbyDir, "dir", "", "Directory of .lua files")
 	lobbyPublishCmd.Flags().StringVar(&lobbyTypeFlag, "type", "", "Lobby type name")
 	_ = lobbyPublishCmd.MarkFlagRequired("dir")
+	lobbySetCmd.Flags().StringVar(&lobbySetEnabled, "enabled", "", "true or false")
+	lobbySetCmd.Flags().StringVar(&lobbySetType, "type", "", "relay or scripted")
+	lobbySetCmd.Flags().StringVar(&lobbySetIce, "ice", "", "true or false")
 }
 
 func runLobbyPublish(client *Client, dir, lobbyType string) error {
@@ -106,6 +125,47 @@ func runLobbyList(client *Client) error {
 		return emit(resp.Data)
 	}
 	logf("%v\n", resp.Data)
+	return nil
+}
+
+func lobbySetBody(enabled, lobbyType, ice string) (map[string]any, error) {
+	body := map[string]any{}
+	if enabled != "" {
+		on, err := strconv.ParseBool(enabled)
+		if err != nil {
+			return nil, usageErrorf("--enabled must be true or false")
+		}
+		body["enabled"] = on
+	}
+	if lobbyType != "" {
+		body["lobby_type"] = lobbyType
+	}
+	if ice != "" {
+		on, err := strconv.ParseBool(ice)
+		if err != nil {
+			return nil, usageErrorf("--ice must be true or false")
+		}
+		body["ice_enabled"] = on
+	}
+	if len(body) == 0 {
+		return nil, usageErrorf("pass --enabled, --type, or --ice")
+	}
+	return body, nil
+}
+
+func runLobbySet(client *Client, enabled, lobbyType, ice string) error {
+	body, err := lobbySetBody(enabled, lobbyType, ice)
+	if err != nil {
+		return err
+	}
+	resp, err := client.PutJSON("/tool/lobby", body)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emit(resp.Data)
+	}
+	logf("lobby enabled %v type %v ice %v\n", resp.Data["enabled"], resp.Data["lobby_type"], resp.Data["ice_enabled"])
 	return nil
 }
 
