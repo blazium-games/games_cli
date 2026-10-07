@@ -422,7 +422,7 @@ func init() {
 	addchangelogCmd.MarkFlagRequired("title")
 	addchangelogCmd.MarkFlagRequired("description")
 
-	lobbyCmd.AddCommand(lobbyPublishCmd, lobbyListCmd, lobbyStatusCmd)
+	lobbyCmd.AddCommand(lobbyPublishCmd, lobbyListCmd, lobbyStatusCmd, lobbySetCmd)
 	rootCmd.AddCommand(buildCmd, addfilesCmd, symbolsCmd, mediaCmd, infoCmd, buildsCmd,
 		genbuildCmd, addchangelogCmd, setfilesCmd, gendocsCmd, lobbyCmd)
 }
