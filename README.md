@@ -99,18 +99,18 @@ Skills that use this tool:
 
 ## Environment inventory
 
-env.example lists every variable this service reads. Local runs load .env in this directory. The workspace-root .env is a sectioned copy of these files; the process does not load it.
+`env.example` lists every variable this service reads, every DigitalOcean secret name, and every GitHub Actions secret name. Local runs load `.env` in this directory. The workspace-root `.env` is a sectioned copy of these files; the process does not load it.
 
 | Variable |
 |----------|
-| BLAZIUM_GAMES_CLI_VERSION |
-| CDN_BASEURL |
-| CDN_KEY |
-| CDN_REGION |
-| CDN_SECRET |
-| CDN_SPACE |
-| ENV_FILE |
-| SPACE_PATH |
-| NPM_ACCESS_TOKEN |
-| NPM_TOKEN |
+| `BLAZIUM_GAMES_CLI_VERSION` |
+| `CDN_BASEURL` |
+| `CDN_KEY` |
+| `CDN_REGION` |
+| `CDN_SECRET` |
+| `CDN_SPACE` |
+| `ENV_FILE` |
+| `NPM_ACCESS_TOKEN` |
+| `NPM_TOKEN` |
+| `SPACE_PATH` |
 <!-- env-inventory-end -->
