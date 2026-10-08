@@ -26,6 +26,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Check env.example
+        run: python3 scripts/check_env_example.py || python scripts/check_env_example.py
       - name: Setup Go
         uses: actions/setup-go@v7
         with:

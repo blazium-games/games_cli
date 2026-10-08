@@ -9,6 +9,8 @@ npm/packages/*/bin/*
 *.log
 .env
 .env.*
+!env.example
+!.env.example
 *.syso
 /chauffeur
 /upload
