@@ -128,12 +128,12 @@ jobs:
       - name: Write VERSION
         run: echo "${{ needs.resolve-version.outputs.simple_version }}" > VERSION
 
-      - name: Write .env from secret
+      - name: Configure build
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
           if [ -z "$ENV_FILE" ]; then
-            echo "ENV_FILE secret is missing" >&2
+            echo "Build configuration is missing" >&2
             exit 1
           fi
           printf "%s" "$ENV_FILE" > .env

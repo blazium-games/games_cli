@@ -28,8 +28,6 @@ PATTERNS = [
     re.compile(r'os\.getenv\(\s*"([A-Z][A-Z0-9_]+)"'),
     re.compile(r'const\s+\w*Env\s*=\s*"([A-Z][A-Z0-9_]+)"'),
     re.compile(r'(?m)^[ \t]*-[ \t]*key:[ \t]*([A-Z][A-Z0-9_]+)\s*$'),
-    re.compile(r'([A-Z][A-Z0-9_]+):\s*\$\{\{\s*secrets\.\1\s*\}\}'),
-    re.compile(r'secrets\.([A-Z][A-Z0-9_]+)'),
 ]
 
 
