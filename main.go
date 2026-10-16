@@ -424,7 +424,7 @@ func init() {
 
 	lobbyCmd.AddCommand(lobbyPublishCmd, lobbyListCmd, lobbyStatusCmd, lobbySetCmd)
 	rootCmd.AddCommand(buildCmd, addfilesCmd, symbolsCmd, mediaCmd, infoCmd, buildsCmd,
-		genbuildCmd, addchangelogCmd, setfilesCmd, gendocsCmd, lobbyCmd, progressCmd)
+		genbuildCmd, addchangelogCmd, setfilesCmd, gendocsCmd, lobbyCmd, progressCmd, itemsCmd, mintKeyCmd)
 }
 
 // initConfig reads in environment variables and config file if set
