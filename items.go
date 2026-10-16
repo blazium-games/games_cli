@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -52,6 +53,15 @@ func init() {
 	_ = mintKeyRenameCmd.MarkFlagRequired("id")
 	_ = mintKeyRenameCmd.MarkFlagRequired("name")
 	_ = mintKeyRevokeCmd.MarkFlagRequired("id")
+	itemsListCmd.Flags().String("cursor", "", "Page cursor from the previous next field")
+	mintKeyListCmd.Flags().String("cursor", "", "Page cursor from the previous next field")
+}
+
+func pagedPath(path, cursor string) string {
+	if cursor == "" {
+		return path
+	}
+	return path + "?cursor=" + url.QueryEscape(cursor)
 }
 
 var itemsCmd = &cobra.Command{Use: "items", Short: "Create and edit item definitions, icons, Steam schema, and gifts"}
@@ -64,7 +74,8 @@ var itemsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		resp, err := client.GetJSON("/tool/items")
+		cursor, _ := cmd.Flags().GetString("cursor")
+		resp, err := client.GetJSON(pagedPath("/tool/items", cursor))
 		if err != nil {
 			return err
 		}
@@ -222,7 +233,8 @@ var mintKeyListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		resp, err := client.GetJSON("/tool/mint-keys")
+		cursor, _ := cmd.Flags().GetString("cursor")
+		resp, err := client.GetJSON(pagedPath("/tool/mint-keys", cursor))
 		if err != nil {
 			return err
 		}
