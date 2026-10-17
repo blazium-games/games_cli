@@ -178,6 +178,42 @@ func (c *Client) GetJSON(endpoint string) (*APIResponse, error) {
 	return c.sendJSON(http.MethodGet, c.buildURL(endpoint), nil)
 }
 
+// DownloadFile writes rawURL to dest. The deploy key is sent only when the URL
+// is on the API host. A redirect to another host drops it.
+func (c *Client) DownloadFile(rawURL, dest string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return usageErrorf("invalid download URL")
+	}
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	api, _ := url.Parse(c.baseURL)
+	if api != nil && strings.EqualFold(u.Host, api.Host) {
+		req.Header.Set("X-Access-Token", c.accessToken)
+		req.Header.Set("X-Secret-Key", c.secretKey)
+	}
+	req.Header.Set("User-Agent", "chauffeur/"+version)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return &networkError{err: scrubError(err, c.secretKey, c.accessToken)}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: %s", resp.Status)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, io.LimitReader(resp.Body, 40<<20)); err != nil {
+		return err
+	}
+	return nil
+}
+
 // PostJSON sends a POST request with JSON body to the API.
 func (c *Client) PostJSON(endpoint string, body any) (*APIResponse, error) {
 	return c.sendJSON(http.MethodPost, c.buildURL(endpoint), body)
