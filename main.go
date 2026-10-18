@@ -423,8 +423,9 @@ func init() {
 	addchangelogCmd.MarkFlagRequired("description")
 
 	lobbyCmd.AddCommand(lobbyPublishCmd, lobbyListCmd, lobbyStatusCmd, lobbySetCmd)
+	blogCmd.AddCommand(blogShowCmd)
 	rootCmd.AddCommand(buildCmd, addfilesCmd, symbolsCmd, mediaCmd, infoCmd, buildsCmd,
-		genbuildCmd, addchangelogCmd, setfilesCmd, gendocsCmd, lobbyCmd, progressCmd, itemsCmd, mintKeyCmd)
+		genbuildCmd, addchangelogCmd, setfilesCmd, gendocsCmd, lobbyCmd, progressCmd, itemsCmd, mintKeyCmd, blogCmd)
 }
 
 // initConfig reads in environment variables and config file if set
