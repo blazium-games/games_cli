@@ -158,6 +158,9 @@ type BuildAsset struct {
 	Description   string         `yaml:"description"`
 	Version       string         `yaml:"version"`
 	EngineVersion string         `yaml:"engine_version,omitempty"`
+	WebEngine     string         `yaml:"web_engine,omitempty"`
+	WebVersion    string         `yaml:"web_version,omitempty"`
+	WebVariant    string         `yaml:"web_variant,omitempty"`
 	OS            string         `yaml:"os,omitempty"`
 	Arch          string         `yaml:"arch,omitempty"`
 	Channel       string         `yaml:"channel,omitempty"`
@@ -183,6 +186,9 @@ type FilesAsset struct {
 	AssetType     string      `yaml:"asset_type,omitempty"`
 	Version       string      `yaml:"version"`
 	EngineVersion string      `yaml:"engine_version,omitempty"`
+	WebEngine     string      `yaml:"web_engine,omitempty"`
+	WebVersion    string      `yaml:"web_version,omitempty"`
+	WebVariant    string      `yaml:"web_variant,omitempty"`
 	Channel       string      `yaml:"channel"`
 	OS            string      `yaml:"os"`
 	Arch          string      `yaml:"arch"`

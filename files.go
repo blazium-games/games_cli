@@ -65,9 +65,13 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 	printBuildIDs(buildData, platform)
 	appID, _ := buildData["app_id"].(string)
 
+	if err := requireWebPack(platform.OS, asset.WebEngine, asset.WebVersion, asset.WebVariant); err != nil {
+		return err
+	}
 	logln("Uploading file...")
 	data, err := uploadBuildFile(client, buildFileUpload{
 		Path: tempZip, Size: st.Size(), Checksum: checksum, BuildID: buildID, Platform: platform, App: asset.App.id(),
+		WebEngine: asset.WebEngine, WebVersion: asset.WebVersion, WebVariant: asset.WebVariant,
 	})
 	if err != nil {
 		return err

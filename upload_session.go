@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -20,12 +21,15 @@ var backoff = func(n int) time.Duration {
 
 // buildFileUpload is one build zip bound for games_upload.
 type buildFileUpload struct {
-	Path     string
-	Size     int64
-	Checksum string
-	BuildID  string
-	Platform PlatformSpec
-	App      string
+	Path       string
+	Size       int64
+	Checksum   string
+	BuildID    string
+	Platform   PlatformSpec
+	App        string
+	WebEngine  string
+	WebVersion string
+	WebVariant string
 }
 
 func (u buildFileUpload) fields() []formField {
@@ -39,6 +43,13 @@ func (u buildFileUpload) fields() []formField {
 	if u.App != "" {
 		out = append(out, formField{"app", u.App})
 	}
+	if u.Platform.OS == "web" {
+		out = append(out,
+			formField{"web_engine", u.WebEngine},
+			formField{"web_version", u.WebVersion},
+			formField{"web_variant", u.WebVariant},
+		)
+	}
 	return out
 }
 
@@ -48,8 +59,10 @@ func uploadBuildFile(c *Client, u buildFileUpload) (map[string]any, error) {
 	if u.Size <= 0 || u.Size > maxBuildFileBytes {
 		return nil, usageErrorf("%s is %s; build files must be between 1 byte and 5 GB", u.Path, sizeText(u.Size))
 	}
+	var data map[string]any
+	var err error
 	if u.Size <= singleShotMaxBytes {
-		return withRetry("upload", func() (map[string]any, error) {
+		data, err = withRetry("upload", func() (map[string]any, error) {
 			resp, _, err := c.PostMultipart(c.filesURL("/tool/upload/files"), u.fields(),
 				[]formFile{{Field: "file", Path: u.Path, Length: -1}}, nil)
 			if err != nil {
@@ -57,8 +70,59 @@ func uploadBuildFile(c *Client, u buildFileUpload) (map[string]any, error) {
 			}
 			return resp.Data, nil
 		})
+	} else {
+		data, err = uploadInChunks(c, u)
 	}
-	return uploadInChunks(c, u)
+	if err != nil {
+		return nil, err
+	}
+	return waitForClean(c, data)
+}
+
+// waitForClean polls until the scan finishes. pending and scanning stay in
+// progress; clean succeeds; error, infected, or a removed file fails the command.
+func waitForClean(c *Client, data map[string]any) (map[string]any, error) {
+	status, _ := data["status"].(string)
+	if status != "pending" && status != "scanning" {
+		return data, nil
+	}
+	uid, _ := data["file_uid"].(string)
+	if uid == "" {
+		return nil, &apiError{Status: 200, Message: "the upload service did not return a file_uid"}
+	}
+	deadline := time.Now().Add(35 * time.Minute)
+	for {
+		if time.Now().After(deadline) {
+			return nil, &apiError{Status: 504, Message: "the upload was still being scanned when chauffeur stopped waiting"}
+		}
+		time.Sleep(2 * time.Second)
+		resp, err := c.GetJSON(c.filesURL("/tool/upload/files/" + url.PathEscape(uid)))
+		if err != nil {
+			var ae *apiError
+			if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+				return nil, &apiError{Status: http.StatusConflict, Code: 4099, Message: "the upload was removed after processing failed"}
+			}
+			if shouldRetry(err) {
+				continue
+			}
+			return nil, err
+		}
+		data = resp.Data
+		status, _ = data["status"].(string)
+		switch status {
+		case "clean":
+			if note, _ := data["error"].(string); note != "" {
+				logf("Warning: %s\n", note)
+			}
+			return data, nil
+		case "error", "infected":
+			msg, _ := data["error"].(string)
+			if msg == "" {
+				msg = "the upload did not pass processing"
+			}
+			return nil, &apiError{Status: http.StatusConflict, Message: msg}
+		}
+	}
 }
 
 // withRetry retries network errors, rate limits and server errors with backoff.
