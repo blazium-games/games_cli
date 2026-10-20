@@ -172,6 +172,15 @@ Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platform
 		if v, _ := cmd.Flags().GetString("symbols"); v != "" {
 			a.Symbols = v
 		}
+		if v, _ := cmd.Flags().GetString("web-engine"); v != "" {
+			a.WebEngine = v
+		}
+		if v, _ := cmd.Flags().GetString("web-version"); v != "" {
+			a.WebVersion = v
+		}
+		if v, _ := cmd.Flags().GetString("web-variant"); v != "" {
+			a.WebVariant = v
+		}
 		if a.App, err = appFromCmd(cmd, a.App); err != nil {
 			return err
 		}
@@ -396,6 +405,9 @@ func init() {
 	addfilesCmd.Flags().String("arch", "", archUsage)
 	addfilesCmd.Flags().String("channel", "", channelUsage)
 	addfilesCmd.Flags().String("engine-version", "", engineUsage)
+	addfilesCmd.Flags().String("web-engine", "", "Web player engine for an os=web upload, such as godot or blazium")
+	addfilesCmd.Flags().String("web-version", "", "Published version of that web engine")
+	addfilesCmd.Flags().String("web-variant", "", "Web export variant, such as web_nothreads_release")
 	addfilesCmd.Flags().String("symbols", "", symbolsUsage)
 	addAppFlags(addfilesCmd)
 

@@ -141,6 +141,17 @@ func validatePlatform(osName, arch, channel string) (PlatformSpec, error) {
 	return PlatformSpec{OS: osName, Arch: arch, Channel: channel}, nil
 }
 
+// requireWebPack checks the three fields a web zip must send to the upload service.
+func requireWebPack(osName, engine, version, variant string) error {
+	if osName != "web" {
+		return nil
+	}
+	if strings.TrimSpace(engine) == "" || strings.TrimSpace(version) == "" || strings.TrimSpace(variant) == "" {
+		return usageErrorf("a web build needs web_engine, web_version, and web_variant")
+	}
+	return nil
+}
+
 // validateFilter checks optional os/arch/channel filters (empty is allowed).
 func validateFilter(osName, arch, channel string) (string, string, string, error) {
 	osName, arch, channel = normalizePlatform(osName, arch, channel)
