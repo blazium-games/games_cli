@@ -188,7 +188,8 @@ Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platform
 		if err != nil {
 			return err
 		}
-		return ProcessFiles(client, config)
+		follow, _ := cmd.Flags().GetBool("follow-symlinks")
+		return ProcessFiles(client, config, follow)
 	},
 }
 
@@ -330,14 +331,20 @@ var setfilesCmd = &cobra.Command{
 		}
 		var fileEntries []FileEntry
 		if filesDir != "" {
-			files, err := ScanFileDirectory(filesDir)
+			hidden, _ := cmd.Flags().GetBool("include-hidden")
+			follow, _ := cmd.Flags().GetBool("follow-symlinks")
+			files, err := ScanFileDirectory(filesDir, fileScanOptions{IncludeHidden: hidden, FollowSymlinks: follow})
 			if err != nil {
 				return usageErrorf("error scanning files directory: %v", err)
 			}
+			logf("Found %d file(s) in directory\n", len(files))
 			for _, file := range files {
+				logf("  %s\n", file)
+				if secretFile(file) {
+					logf("Warning: %s looks like a secret and will be packed into the build\n", file)
+				}
 				fileEntries = append(fileEntries, FileEntry{File: file})
 			}
-			logf("Found %d file(s) in directory\n", len(fileEntries))
 		}
 		app, err := appFromCmd(cmd, nil)
 		if err != nil {
@@ -409,6 +416,7 @@ func init() {
 	addfilesCmd.Flags().String("web-version", "", "Published version of that web engine")
 	addfilesCmd.Flags().String("web-variant", "", "Web export variant, such as web_nothreads_release")
 	addfilesCmd.Flags().String("symbols", "", symbolsUsage)
+	addfilesCmd.Flags().Bool("follow-symlinks", false, "Upload symlink targets listed in the spec. Off by default")
 	addAppFlags(addfilesCmd)
 
 	genbuildCmd.Flags().String("images", "", "Directory of gallery images to add (PNG, JPEG, GIF, WebP)")
@@ -425,6 +433,8 @@ func init() {
 	setfilesCmd.Flags().String("type", "", "Asset type (default game)")
 	setfilesCmd.Flags().String("arch", "", archUsage+" (default x86_64)")
 	setfilesCmd.Flags().String("files", "", "Directory of files to add")
+	setfilesCmd.Flags().Bool("include-hidden", false, "Include dotfiles and dot-directories (skipped by default)")
+	setfilesCmd.Flags().Bool("follow-symlinks", false, "Record symlink targets. chauffeur addfiles also needs --follow-symlinks")
 	setfilesCmd.Flags().String("engine-version", "", engineUsage)
 	setfilesCmd.Flags().String("symbols", "", symbolsUsage)
 	addAppFlags(setfilesCmd)

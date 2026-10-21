@@ -14,6 +14,9 @@ import (
 var (
 	singleShotMaxBytes int64 = 64 << 20
 	chunkBytes         int64 = 16 << 20
+	// maxDownloadBytes caps bug screenshots. Tests shrink it. One extra byte
+	// is read so a file at the cap succeeds and a larger one is an error.
+	maxDownloadBytes int64 = 40 << 20
 )
 
 const (

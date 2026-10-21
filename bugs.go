@@ -30,7 +30,7 @@ var bugsCmd = &cobra.Command{
 
 The key can read tickets, screenshots, and logs. It cannot change status.
 Screenshots and logs are saved with the screenshot, log, and pull commands.`,
-	Example: "  chauffeur bugs\n  chauffeur bugs --status open\n  chauffeur bugs pull bug_123 --dir ./bugs",
+	Example: "  chauffeur bugs\n  chauffeur bugs --status open\n  chauffeur bugs pull bug_11111111-1111-4111-8111-111111111111 --dir ./bugs",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := deployClient(cmd)
@@ -67,7 +67,11 @@ var shotCmd = &cobra.Command{
 			return err
 		}
 		out, _ := cmd.Flags().GetString("out")
-		return saveBugScreenshot(c, args[0], out)
+		uid, err := canonicalBugUID(args[0])
+		if err != nil {
+			return err
+		}
+		return saveBugScreenshot(c, uid, out)
 	},
 }
 
@@ -81,11 +85,15 @@ var logCmd = &cobra.Command{
 			return err
 		}
 		out, _ := cmd.Flags().GetString("out")
-		body, err := readBugLog(c, args[0])
+		uid, err := canonicalBugUID(args[0])
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(out, body, 0o644)
+		body, err := readBugLog(c, uid)
+		if err != nil {
+			return err
+		}
+		return writePrivateFile(out, body)
 	},
 }
 
@@ -99,29 +107,77 @@ var pullCmd = &cobra.Command{
 			return err
 		}
 		dir, _ := cmd.Flags().GetString("dir")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		uid := args[0]
-		resp, err := c.GetJSON("/tool/bugs/" + url.PathEscape(uid) + "/screenshot")
-		if err == nil {
-			if link := str(resp.Data["url"]); link != "" {
-				if err := c.DownloadFile(link, filepath.Join(dir, uid+"-screenshot")); err != nil {
-					return err
-				}
-			}
-		} else if !missingBugFile(err) {
-			return err
-		}
-		body, err := readBugLog(c, uid)
-		if missingBugFile(err) || (err == nil && len(body) == 0) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(filepath.Join(dir, uid+"-log.txt"), body, 0o644)
+		return pullBugFiles(c, dir, args[0])
 	},
+}
+
+func canonicalBugUID(uid string) (string, error) {
+	uid = strings.TrimSpace(uid)
+	rest, ok := strings.CutPrefix(uid, "bug_")
+	if !ok || !validUID(rest) {
+		return "", usageErrorf("bug uid must look like bug_<uuid>")
+	}
+	return "bug_" + strings.TrimSpace(rest), nil
+}
+
+func fileInDir(dir, name string) (string, error) {
+	if name != filepath.Base(name) {
+		return "", usageErrorf("refusing to write outside %s", dir)
+	}
+	dest := filepath.Join(dir, name)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	absDest, err := filepath.Abs(dest)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(absDir, absDest)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", usageErrorf("refusing to write outside %s", dir)
+	}
+	return dest, nil
+}
+
+func writePrivateFile(path string, body []byte) error {
+	return os.WriteFile(path, body, 0o600)
+}
+
+func pullBugFiles(c *Client, dir, rawUID string) error {
+	uid, err := canonicalBugUID(rawUID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	shot, err := fileInDir(dir, uid+"-screenshot")
+	if err != nil {
+		return err
+	}
+	logPath, err := fileInDir(dir, uid+"-log.txt")
+	if err != nil {
+		return err
+	}
+	resp, err := c.GetJSON("/tool/bugs/" + url.PathEscape(uid) + "/screenshot")
+	if err == nil {
+		if link := str(resp.Data["url"]); link != "" {
+			if err := c.DownloadFile(link, shot); err != nil {
+				return err
+			}
+		}
+	} else if !missingBugFile(err) {
+		return err
+	}
+	body, err := readBugLog(c, uid)
+	if missingBugFile(err) || (err == nil && len(body) == 0) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(logPath, body)
 }
 
 func listBugTickets(c *Client, status string, onlyPage int) ([]map[string]any, error) {
@@ -160,6 +216,10 @@ func listBugTickets(c *Client, status string, onlyPage int) ([]map[string]any, e
 }
 
 func saveBugScreenshot(c *Client, uid, dest string) error {
+	uid, err := canonicalBugUID(uid)
+	if err != nil {
+		return err
+	}
 	resp, err := c.GetJSON("/tool/bugs/" + url.PathEscape(uid) + "/screenshot")
 	if err != nil {
 		return err
@@ -172,6 +232,10 @@ func saveBugScreenshot(c *Client, uid, dest string) error {
 }
 
 func readBugLog(c *Client, uid string) ([]byte, error) {
+	uid, err := canonicalBugUID(uid)
+	if err != nil {
+		return nil, err
+	}
 	var buf strings.Builder
 	offset := 0
 	for {

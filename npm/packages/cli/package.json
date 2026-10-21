@@ -12,6 +12,7 @@
   },
   "files": [
     "bin/chauffeur.js",
+    "checksums.json",
     "README.md",
     "LICENSE"
   ],

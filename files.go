@@ -1,16 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
-	"time"
 )
 
 // ProcessFiles handles the addfiles spec workflow: create a platform build,
 // zip and upload its files, then upload symbols if the spec names them.
-func ProcessFiles(client *Client, config *ParsedConfig) error {
+func ProcessFiles(client *Client, config *ParsedConfig, followSymlinks bool) error {
 	if config.FilesAsset == nil {
 		return usageErrorf("files asset is missing")
 	}
@@ -37,10 +34,13 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 		up.cleanup()
 	}
 
-	tempZip := filepath.Join(os.TempDir(), fmt.Sprintf("chauffeur_upload_%d.zip", time.Now().UnixNano()))
+	tempZip, err := createUploadTemp()
+	if err != nil {
+		return err
+	}
 	defer os.Remove(tempZip)
 	logln("Creating zip file...")
-	if err := CreateZip(tempZip, filePaths); err != nil {
+	if err := createZip(tempZip, filePaths, followSymlinks); err != nil {
 		return usageErrorf("failed to create zip: %v", err)
 	}
 	st, err := os.Stat(tempZip)
@@ -96,6 +96,21 @@ func ProcessFiles(client *Client, config *ParsedConfig) error {
 		return emit(map[string]any{"ok": true, "builds": []buildResult{result}})
 	}
 	return nil
+}
+
+// createUploadTemp returns a private zip path that another user cannot guess
+// or pre-create as a symlink.
+func createUploadTemp() (string, error) {
+	f, err := os.CreateTemp("", "chauffeur-upload-*.zip")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(name)
+		return "", err
+	}
+	return name, nil
 }
 
 // platformBuild returns the build the files belong to. A build already

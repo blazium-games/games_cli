@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +52,30 @@ func TestPlatformBuildReusesMatchingBuild(t *testing.T) {
 	}
 	if got := responseBuildID(data); got != "new" || registered != 1 {
 		t.Fatalf("build_id = %q, registered = %d; want a new registration", got, registered)
+	}
+}
+
+func TestUploadTempZipIsUnpredictable(t *testing.T) {
+	a, err := createUploadTemp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(a)
+	b, err := createUploadTemp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(b)
+	if a == b {
+		t.Fatal("temp zips reused one path")
+	}
+	for _, name := range []string{a, b} {
+		base := filepath.Base(name)
+		if !strings.HasPrefix(base, "chauffeur-upload-") || strings.Contains(base, "chauffeur_upload_") {
+			t.Fatalf("temp zip %s", name)
+		}
+		if filepath.Dir(name) != filepath.Clean(os.TempDir()) && !strings.HasPrefix(name, os.TempDir()) {
+			t.Fatalf("temp zip is not in the temp dir: %s", name)
+		}
 	}
 }

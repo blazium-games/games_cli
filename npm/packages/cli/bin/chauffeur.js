@@ -2,10 +2,19 @@
 "use strict";
 
 const { execFileSync, spawnSync } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const https = require("https");
 const os = require("os");
 const path = require("path");
+
+const CDN_PLATFORMS = new Set([
+  "linux-amd64",
+  "linux-arm64",
+  "windows-amd64",
+  "darwin-amd64",
+  "darwin-arm64",
+]);
 
 function fail(message) {
   console.error(message);
@@ -40,18 +49,78 @@ function optionalBin(pkgName, exe) {
   return bin;
 }
 
-function cacheFile(exe) {
+function wrapperRoot() {
+  return path.join(__dirname, "..");
+}
+
+function readVersion(root) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  return String(pkg.version || "");
+}
+
+function pinnedVersion(version) {
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) || version === "0.0.0") {
+    throw new Error("refusing to download an unpinned chauffeur build");
+  }
+  return version;
+}
+
+function cacheFile(exe, version) {
+  const pinned = pinnedVersion(version);
   const base =
     process.platform === "win32"
       ? process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local")
       : path.join(os.homedir(), ".cache");
-  return path.join(base, "blazium-games", "npm-cli", "latest", exe);
+  return path.join(base, "blazium-games", "npm-cli", pinned, exe);
+}
+
+function archiveURL(cdn, version) {
+  if (!CDN_PLATFORMS.has(cdn)) {
+    throw new Error("unsupported chauffeur platform");
+  }
+  const pinned = pinnedVersion(version);
+  return `https://cdn.blazium.online/tools/chauffeur/${encodeURIComponent(cdn)}/${encodeURIComponent(pinned)}/archive/default`;
+}
+
+function isSHA256(value) {
+  return typeof value === "string" && /^[0-9a-fA-F]{64}$/.test(value);
+}
+
+function loadPins(root) {
+  const file = path.join(root, "checksums.json");
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    throw new Error("checksums.json is missing; refusing to download an unverified binary");
+  }
+  return JSON.parse(raw);
+}
+
+function pinFor(pins, cdn) {
+  const pin = pins && pins[cdn];
+  if (!pin || !isSHA256(pin.archive) || !isSHA256(pin.binary)) {
+    throw new Error(`no published checksum for ${cdn}; refusing to download`);
+  }
+  return { archive: pin.archive.toLowerCase(), binary: pin.binary.toLowerCase() };
+}
+
+function sha256File(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function assertChecksum(file, expected, label) {
+  const want = String(expected || "").toLowerCase();
+  const got = sha256File(file);
+  if (!isSHA256(want) || got !== want) {
+    throw new Error(`checksum mismatch for ${label}`);
+  }
 }
 
 function fetchBuffer(url, redirectsLeft) {
   return new Promise((resolve, reject) => {
     if (!url.startsWith("https:")) {
-      reject(new Error(`Refusing non-https URL`));
+      reject(new Error("Refusing non-https URL"));
       return;
     }
     const req = https.get(url, (res) => {
@@ -103,13 +172,29 @@ function unpack(zipPath, dest, exe) {
   return bin;
 }
 
-async function downloadBinary(spec, dest) {
-  const url = `https://cdn.blazium.online/tools/chauffeur/${spec.cdn}/latest/archive/default`;
+async function downloadBinary(spec, dest, version, pin) {
+  const url = archiveURL(spec.cdn, version);
   const body = await fetchBuffer(url, 5);
-  const zip = `${dest}.zip`;
+  const got = crypto.createHash("sha256").update(body).digest("hex");
+  if (got !== pin.archive) {
+    throw new Error("CDN archive checksum mismatch; refusing to unpack");
+  }
+  const zipDir = fs.mkdtempSync(path.join(os.tmpdir(), "chauffeur-"));
+  const zip = path.join(zipDir, "archive.zip");
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.writeFileSync(zip, body);
-  return unpack(zip, path.dirname(dest), spec.exe);
+  try {
+    const bin = unpack(zip, path.dirname(dest), spec.exe);
+    try {
+      assertChecksum(bin, pin.binary, spec.exe);
+    } catch (err) {
+      fs.rmSync(bin, { force: true });
+      throw err;
+    }
+    return bin;
+  } finally {
+    fs.rmSync(zipDir, { recursive: true, force: true });
+  }
 }
 
 function run(bin) {
@@ -136,18 +221,35 @@ async function main() {
     return;
   }
 
-  const cached = cacheFile(spec.exe);
+  const root = wrapperRoot();
+  const version = readVersion(root);
+  const pin = pinFor(loadPins(root), spec.cdn);
+  const cached = cacheFile(spec.exe, version);
   if (fs.existsSync(cached)) {
-    run(cached);
-    return;
+    try {
+      assertChecksum(cached, pin.binary, spec.exe);
+      run(cached);
+      return;
+    } catch (err) {
+      fs.rmSync(cached, { force: true });
+      console.error(`${err.message}. Refusing the cached binary.`);
+    }
   }
 
-  console.error(`Optional package ${pkgName} is not installed. Downloading chauffeur from the CDN.`);
-  run(await downloadBinary(spec, cached));
+  console.error(`Optional package ${pkgName} is not installed. Downloading chauffeur ${version} from the CDN.`);
+  run(await downloadBinary(spec, cached, version, pin));
 }
 
 if (require.main === module) {
   main().catch((err) => fail(err && err.message ? err.message : String(err)));
 }
 
-module.exports = { platformTarget, cacheFile };
+module.exports = {
+  platformTarget,
+  cacheFile,
+  archiveURL,
+  readVersion,
+  loadPins,
+  pinFor,
+  assertChecksum,
+};

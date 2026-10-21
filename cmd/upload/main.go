@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -10,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +18,13 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 )
+
+const defaultACL = "private"
+
+// spacesEndpoint overrides the DigitalOcean Spaces host in tests.
+var spacesEndpoint string
+
+var uploadHTTPClient = &http.Client{Timeout: 30 * time.Minute}
 
 var logger *logrus.Logger
 
@@ -39,7 +46,7 @@ func main() {
 	filePath := flag.String("file", "", "Path to a single file to upload")
 	folderPath := flag.String("folder", "", "Path to a folder containing files to upload")
 	cdnPath := flag.String("path", "", "Destination path on CDN (required, e.g., 'images/', 'builds/')")
-	acl := flag.String("acl", "public-read", "ACL setting (default: 'public-read')")
+	acl := flag.String("acl", defaultACL, "ACL setting (default: 'private'; pass public-read to publish)")
 	storageType := flag.String("storage", "STANDARD", "Storage type (default: 'STANDARD')")
 	flag.Parse()
 
@@ -59,6 +66,9 @@ func main() {
 	// Ensure cdnPath ends with a slash
 	if !strings.HasSuffix(*cdnPath, "/") {
 		*cdnPath = *cdnPath + "/"
+	}
+	if err := checkUploadACL(*cdnPath, *acl); err != nil {
+		logger.WithError(err).Fatal("Error: refusing upload")
 	}
 
 	// Validate environment variables
@@ -126,7 +136,7 @@ func uploadSingleFile(filePath, cdnPath, acl, storageType string) error {
 
 	// Display final CDN URL
 	cdnBase := os.Getenv("CDN_BASEURL")
-	cdnURL := fmt.Sprintf("%s%s%s", cdnBase, spacePath, filename)
+	cdnURL := strings.TrimRight(cdnBase, "/") + escapeS3Path(spacePath+filename)
 	logger.WithFields(logrus.Fields{
 		"file":    filename,
 		"cdn_url": cdnURL,
@@ -190,7 +200,7 @@ func uploadFolder(folderPath, cdnPath, acl, storageType string) error {
 			continue
 		}
 
-		cdnURL := fmt.Sprintf("%s%s%s", cdnBase, spacePath, filename)
+		cdnURL := strings.TrimRight(cdnBase, "/") + escapeS3Path(spacePath+filename)
 		logger.WithFields(logrus.Fields{
 			"file":    filename,
 			"cdn_url": cdnURL,
@@ -208,6 +218,38 @@ func uploadFolder(folderPath, cdnPath, acl, storageType string) error {
 	}
 
 	return nil
+}
+
+func checkUploadACL(cdnPath, acl string) error {
+	switch acl {
+	case "private", "public-read":
+	default:
+		return fmt.Errorf("acl must be private or public-read")
+	}
+	if acl == "public-read" && privateCDNPath(cdnPath) {
+		return fmt.Errorf("refusing to upload %s with public-read", cdnPath)
+	}
+	return nil
+}
+
+func privateCDNPath(p string) bool {
+	s := "/" + strings.Trim(strings.ToLower(filepath.ToSlash(p)), "/") + "/"
+	return strings.Contains(s, "/private/")
+}
+
+func escapeS3Path(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func spacesURL(space, region, key string) string {
+	if spacesEndpoint != "" {
+		return strings.TrimRight(spacesEndpoint, "/") + key
+	}
+	return fmt.Sprintf("https://%s.%s.digitaloceanspaces.com%s", space, region, key)
 }
 
 func putS3(path, file, spacePath, acl, storageType string) error {
@@ -232,17 +274,15 @@ func putS3(path, file, spacePath, acl, storageType string) error {
 
 	fullPath := filepath.Join(path, file)
 
-	// Open file
+	// Open file and stream it. The signature does not cover the body.
 	f, err := os.Open(fullPath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-
-	// Read file contents
-	fileContents, err := io.ReadAll(f)
+	st, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
+		return fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	// Detect MIME type
@@ -255,9 +295,10 @@ func putS3(path, file, spacePath, acl, storageType string) error {
 	date := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 -0700")
 	aclHeader := fmt.Sprintf("x-amz-acl:%s", acl)
 	storageHeader := fmt.Sprintf("x-amz-storage-class:%s", storageType)
+	objectKey := escapeS3Path(spacePath + file)
 
-	// Build string to sign
-	stringToSign := fmt.Sprintf("PUT\n\n%s\n%s\n%s\n%s\n/%s%s%s", contentType, date, aclHeader, storageHeader, space, spacePath, file)
+	// Build string to sign. The key is escaped the same way as the request URI.
+	stringToSign := fmt.Sprintf("PUT\n\n%s\n%s\n%s\n%s\n/%s%s", contentType, date, aclHeader, storageHeader, space, objectKey)
 
 	// Generate signature
 	mac := hmac.New(sha1.New, []byte(secret))
@@ -265,11 +306,12 @@ func putS3(path, file, spacePath, acl, storageType string) error {
 	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	// Build request
-	url := fmt.Sprintf("https://%s.%s.digitaloceanspaces.com%s%s", space, region, spacePath, file)
-	req, err := http.NewRequest("PUT", url, bytes.NewReader(fileContents))
+	rawURL := spacesURL(space, region, objectKey)
+	req, err := http.NewRequest(http.MethodPut, rawURL, f)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	req.ContentLength = st.Size()
 
 	req.Header.Set("Host", fmt.Sprintf("%s.%s.digitaloceanspaces.com", space, region))
 	req.Header.Set("Date", date)
@@ -279,8 +321,7 @@ func putS3(path, file, spacePath, acl, storageType string) error {
 	req.Header.Set("Authorization", fmt.Sprintf("AWS %s:%s", key, signature))
 
 	// Execute request
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
+	resp, err := uploadHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload request failed: %w", err)
 	}

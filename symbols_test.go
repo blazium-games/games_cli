@@ -88,8 +88,10 @@ func TestUploadSymbolsSendsBuildAndChecksum(t *testing.T) {
 	sym := writeSym(t, filepath.Join(t.TempDir(), "game.sym"), symHeader)
 	sum := sha256.Sum256([]byte(symHeader))
 	var order []string
+	var idem string
 	fields := map[string]string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		idem = r.Header.Get("Idempotency-Key")
 		if r.URL.Path != "/tool/upload/symbols" {
 			http.NotFound(w, r)
 			return
@@ -122,10 +124,20 @@ func TestUploadSymbolsSendsBuildAndChecksum(t *testing.T) {
 	if fields["build_id"] != build || fields["checksum"] != hex.EncodeToString(sum[:]) || fields["filename"] != "game.sym" {
 		t.Fatalf("fields = %v", fields)
 	}
+	if idem != hex.EncodeToString(sum[:])+":"+build {
+		t.Fatalf("idempotency key = %q", idem)
+	}
 	if int64Of(data["count"]) != 1 {
 		t.Fatalf("data = %v", data)
 	}
 	if _, err := uploadSymbols(testClient(srv.URL), "not-a-uid", sym); exitCode(err) != exitUsage {
 		t.Fatalf("bad build id: %v", err)
+	}
+}
+
+func TestCheckSymHeaderRejectsExtraFields(t *testing.T) {
+	p := writeSym(t, filepath.Join(t.TempDir(), "bad.sym"), "MODULE linux x86_64 ABCDEF0123456789 my game\n")
+	if err := checkSymHeader(p); err == nil {
+		t.Fatal("module name with a space accepted")
 	}
 }

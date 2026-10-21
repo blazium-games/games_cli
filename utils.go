@@ -81,13 +81,18 @@ func withinDir(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// CreateZip creates a zip file containing all the specified files
+// CreateZip creates a zip file containing all the specified files.
+// Symlinks are refused so a link cannot pack a file from outside the tree.
 func CreateZip(outputPath string, filePaths []string) error {
+	return createZip(outputPath, filePaths, false)
+}
+
+func createZip(outputPath string, filePaths []string, followSymlinks bool) error {
 	names, err := zipEntryNames(filePaths)
 	if err != nil {
 		return err
 	}
-	zipFile, err := os.Create(outputPath)
+	zipFile, err := openZipOutput(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create zip file: %w", err)
 	}
@@ -97,17 +102,25 @@ func CreateZip(outputPath string, filePaths []string) error {
 	defer zipWriter.Close()
 
 	for i, filePath := range filePaths {
-		// Open the source file
-		srcFile, err := os.Open(filePath)
+		info, err := os.Lstat(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to open file %s: %w", filePath, err)
 		}
-
-		// Get file info for the header
-		info, err := srcFile.Stat()
+		if info.Mode()&os.ModeSymlink != 0 {
+			if !followSymlinks {
+				return fmt.Errorf("refusing symlink %s", filePath)
+			}
+			info, err = os.Stat(filePath)
+			if err != nil {
+				return fmt.Errorf("failed to open file %s: %w", filePath, err)
+			}
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", filePath)
+		}
+		srcFile, err := os.Open(filePath)
 		if err != nil {
-			srcFile.Close()
-			return fmt.Errorf("failed to get file info for %s: %w", filePath, err)
+			return fmt.Errorf("failed to open file %s: %w", filePath, err)
 		}
 
 		// Create a zip file header
@@ -199,10 +212,46 @@ func ScanImageDirectory(dirPath string) ([]string, error) {
 	return imageFiles, nil
 }
 
-// ScanFileDirectory scans a directory for all files (not just images) and returns their paths
-// Recursively walks the directory and collects all file paths
-func ScanFileDirectory(dirPath string) ([]string, error) {
-	// Validate directory exists
+// fileScanOptions controls which files setfiles records.
+// Dotfiles and symlinks are excluded unless the matching flag is set.
+type fileScanOptions struct {
+	IncludeHidden  bool
+	FollowSymlinks bool
+}
+
+// secretFile reports names that commonly hold credentials.
+func secretFile(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	switch base {
+	case ".env", ".npmrc", ".netrc", ".pypirc", ".git-credentials",
+		"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+		"credentials", "credentials.json", "secrets.json", "secrets.yml", "secrets.yaml":
+		return true
+	}
+	switch filepath.Ext(base) {
+	case ".pem", ".key", ".p12", ".pfx":
+		return true
+	}
+	return false
+}
+
+func openZipOutput(path string) (*os.File, error) {
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
+			return nil, fmt.Errorf("refusing to write the zip through %s", path)
+		}
+		return os.OpenFile(path, os.O_RDWR|os.O_TRUNC, 0o600)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
+// ScanFileDirectory collects regular files under dirPath.
+// Dotfiles and dot-directories are skipped unless IncludeHidden is set.
+// Symlinks are an error unless FollowSymlinks is set, and even then only a
+// symlink to a regular file is recorded.
+func ScanFileDirectory(dirPath string, opt fileScanOptions) ([]string, error) {
 	info, err := os.Stat(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("directory does not exist: %w", err)
@@ -217,11 +266,30 @@ func ScanFileDirectory(dirPath string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-
-		if !info.IsDir() {
-			files = append(files, path)
+		if path != dirPath && !opt.IncludeHidden && strings.HasPrefix(info.Name(), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-
+		if info.Mode()&os.ModeSymlink != 0 {
+			if !opt.FollowSymlinks {
+				return fmt.Errorf("refusing symlink %s", path)
+			}
+			target, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("symlink %s: %w", path, err)
+			}
+			if !target.Mode().IsRegular() {
+				return fmt.Errorf("refusing symlink %s that does not point at a file", path)
+			}
+			files = append(files, path)
+			return nil
+		}
+		if info.IsDir() || !info.Mode().IsRegular() {
+			return nil
+		}
+		files = append(files, path)
 		return nil
 	})
 
