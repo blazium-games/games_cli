@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -261,13 +262,16 @@ var mintKeyCreateCmd = &cobra.Command{
 var mintKeyRenameCmd = &cobra.Command{
 	Use: "rename", Short: "Rename a mint key",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		id, _ := cmd.Flags().GetString("id")
+		if _, err := mintKeyPath(id); err != nil {
+			return err
+		}
 		client, err := deployClient(cmd)
 		if err != nil {
 			return err
 		}
-		id, _ := cmd.Flags().GetString("id")
 		name, _ := cmd.Flags().GetString("name")
-		resp, err := client.sendJSON("PUT", "/tool/mint-keys/"+id, map[string]any{"name": name})
+		resp, err := renameMintKey(client, id, name)
 		if err != nil {
 			return err
 		}
@@ -278,17 +282,44 @@ var mintKeyRenameCmd = &cobra.Command{
 var mintKeyRevokeCmd = &cobra.Command{
 	Use: "revoke", Short: "Revoke a mint key",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		id, _ := cmd.Flags().GetString("id")
+		if _, err := mintKeyPath(id); err != nil {
+			return err
+		}
 		client, err := deployClient(cmd)
 		if err != nil {
 			return err
 		}
-		id, _ := cmd.Flags().GetString("id")
-		resp, err := client.Delete("/tool/mint-keys/" + id)
+		resp, err := revokeMintKey(client, id)
 		if err != nil {
 			return err
 		}
 		return emit(resp.Data)
 	},
+}
+
+func mintKeyPath(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if !validUID(id) {
+		return "", usageErrorf("--id must be a mint key uid")
+	}
+	return "/tool/mint-keys/" + url.PathEscape(id), nil
+}
+
+func renameMintKey(c *Client, id, name string) (*APIResponse, error) {
+	path, err := mintKeyPath(id)
+	if err != nil {
+		return nil, err
+	}
+	return c.PutJSON(path, map[string]any{"name": name})
+}
+
+func revokeMintKey(c *Client, id string) (*APIResponse, error) {
+	path, err := mintKeyPath(id)
+	if err != nil {
+		return nil, err
+	}
+	return c.Delete(path)
 }
 
 func jsonRaw(s string) any {

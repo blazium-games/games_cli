@@ -63,6 +63,9 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	if first.Scheme == "https" && req.URL.Scheme != "https" {
 		return fmt.Errorf("refusing redirect from https to %s", req.URL.Scheme)
 	}
+	if req.URL.Scheme == "http" && !loopbackHost(req.URL.Hostname()) {
+		return fmt.Errorf("refusing redirect to http://%s", req.URL.Hostname())
+	}
 	if !strings.EqualFold(req.URL.Host, first.Host) {
 		for _, h := range credentialHeaders {
 			req.Header.Del(h)
@@ -185,6 +188,9 @@ func (c *Client) DownloadFile(rawURL, dest string) error {
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return usageErrorf("invalid download URL")
 	}
+	if u.Scheme != "https" && !loopbackHost(u.Hostname()) {
+		return usageErrorf("download URL must use https")
+	}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
@@ -203,15 +209,33 @@ func (c *Client) DownloadFile(rawURL, dest string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed: %s", resp.Status)
 	}
-	f, err := os.Create(dest)
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if _, err := io.Copy(f, io.LimitReader(resp.Body, 40<<20)); err != nil {
-		return err
+	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxDownloadBytes+1))
+	closeErr := f.Close()
+	if copyErr != nil || closeErr != nil || n > maxDownloadBytes {
+		os.Remove(dest)
+	}
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if n > maxDownloadBytes {
+		return fmt.Errorf("download is larger than 40 MB")
 	}
 	return nil
+}
+
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // PostJSON sends a POST request with JSON body to the API.
@@ -371,8 +395,7 @@ func checkServiceURL(raw string) error {
 	case "https":
 		return nil
 	case "http":
-		host := u.Hostname()
-		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		if loopbackHost(u.Hostname()) {
 			return nil
 		}
 	}

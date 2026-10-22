@@ -26,6 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Wrapper checksum tests
+        if: runner.os == 'Linux'
+        run: node --test npm/packages/cli/chauffeur.test.js
+
       - name: Check env.example
         run: python3 scripts/check_env_example.py || python scripts/check_env_example.py
       - name: Setup Go
@@ -185,6 +189,8 @@ jobs:
           cp VERSION "$pkg_root/VERSION"
           (cd "$pkg_root" && zip -j "archive/default.zip" "${bin}" "VERSION")
           mv "$pkg_root/archive/default.zip" "$pkg_root/archive/default"
+          sha256sum "$pkg_root/archive/default" | awk '{print $1}' > "dist/${GOOS}-${GOARCH}/archive.sha256"
+          sha256sum "dist/${GOOS}-${GOARCH}/${bin}" | awk '{print $1}' > "dist/${GOOS}-${GOARCH}/binary.sha256"
 
       - name: Upload archive
         env:
@@ -205,7 +211,10 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: chauffeur-${{ matrix.goos }}-${{ matrix.arch }}
-          path: dist/${{ matrix.goos }}-${{ matrix.arch }}/chauffeur*
+          path: |
+            dist/${{ matrix.goos }}-${{ matrix.arch }}/chauffeur*
+            dist/${{ matrix.goos }}-${{ matrix.arch }}/archive.sha256
+            dist/${{ matrix.goos }}-${{ matrix.arch }}/binary.sha256
           if-no-files-found: error
 
   publish-npm:
@@ -274,6 +283,7 @@ jobs:
             done
           }
           stage_docs cli "@blazium-games/cli"
+          node npm/write-checksums.cjs dist/bins
           node npm/stamp-versions.cjs
           for pkg in cli-linux-x64 cli-linux-arm64 cli-win32-x64 cli-darwin-x64 cli-darwin-arm64 cli; do
             npm publish --access public "npm/packages/${pkg}"

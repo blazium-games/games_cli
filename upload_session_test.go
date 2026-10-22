@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -87,7 +88,7 @@ func (f *fakeUploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, 400, nil, 4046, "Checksum mismatch", nil)
 			return
 		}
-		writeEnvelope(w, 201, map[string]any{"file_uid": "file-1", "status": "processing"}, 0, "", nil)
+		writeEnvelope(w, 201, map[string]any{"file_uid": "file-1", "status": "clean"}, 0, "", nil)
 	case r.URL.Path == "/tool/upload/files":
 		f.chunkCalls++
 		if f.fail503 > 0 {
@@ -148,7 +149,7 @@ func (f *fakeUploader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, 400, nil, 4046, "Checksum mismatch", nil)
 			return
 		}
-		writeEnvelope(w, 201, map[string]any{"file_uid": "file-2", "status": "processing"}, 0, "", nil)
+		writeEnvelope(w, 201, map[string]any{"file_uid": "file-2", "status": "clean"}, 0, "", nil)
 	default:
 		http.NotFound(w, r)
 	}
@@ -308,6 +309,113 @@ func TestChecksumMismatchIsNotRetried(t *testing.T) {
 	_, err := uploadBuildFile(testClient(srv.URL), buildFileUpload{Path: path, Size: 10_000, Checksum: strings.Repeat("0", 64), BuildID: "b1", Platform: testPlatform})
 	if err == nil || !strings.Contains(err.Error(), "4046") || !strings.Contains(err.Error(), "hint") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestWaitForCleanRejectsFirstFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("status %s was polled", r.URL.Path)
+	}))
+	defer srv.Close()
+	c := testClient(srv.URL)
+	for _, status := range []string{"infected", "error", "processing", ""} {
+		_, err := waitForClean(c, map[string]any{"status": status, "file_uid": "f", "error": "bad file"})
+		if err == nil {
+			t.Fatalf("status %q reported as success", status)
+		}
+	}
+}
+
+func TestWaitForCleanMapsMissingFileTo4099(t *testing.T) {
+	old := scanPollInterval
+	scanPollInterval = time.Millisecond
+	t.Cleanup(func() { scanPollInterval = old })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeEnvelope(w, http.StatusNotFound, nil, 4040, "missing", nil)
+	}))
+	defer srv.Close()
+	_, err := waitForClean(testClient(srv.URL), map[string]any{"status": "pending", "file_uid": "f1"})
+	ae, ok := err.(*apiError)
+	if !ok || ae.Code != 4099 || ae.Status != http.StatusConflict {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestChunkedUploadRejectsStuckOffset(t *testing.T) {
+	shrinkUploads(t, 1<<10, 64<<10)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tool/upload/sessions" {
+			writeEnvelope(w, 201, map[string]any{"session_id": "s", "current_size": 0}, 0, "", nil)
+			return
+		}
+		calls.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		writeEnvelope(w, 202, map[string]any{"session_id": "s", "current_size": 0}, 0, "", nil)
+	}))
+	defer srv.Close()
+	path, sum := randomFile(t, 100_000)
+	errc := make(chan error, 1)
+	go func() {
+		_, err := uploadInChunks(testClient(srv.URL), buildFileUpload{Path: path, Size: 100_000, Checksum: sum, BuildID: "b1", Platform: testPlatform})
+		errc <- err
+	}()
+	select {
+	case err := <-errc:
+		if err == nil || !strings.Contains(err.Error(), "no progress") {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stuck offset looped")
+	}
+	if n := calls.Load(); n == 0 || n > maxChunkTries+2 {
+		t.Fatalf("chunk calls = %d", n)
+	}
+}
+
+func TestChunkedUploadRejectsOffsetOutsideFile(t *testing.T) {
+	shrinkUploads(t, 1<<10, 64<<10)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tool/upload/sessions" {
+			writeEnvelope(w, 201, map[string]any{"session_id": "s", "current_size": -1}, 0, "", nil)
+			return
+		}
+		t.Errorf("chunk sent after a bad session offset")
+		writeEnvelope(w, 500, nil, 5000, "no", nil)
+	}))
+	defer srv.Close()
+	path, sum := randomFile(t, 1000)
+	_, err := uploadInChunks(testClient(srv.URL), buildFileUpload{Path: path, Size: 1000, Checksum: sum, BuildID: "b1", Platform: testPlatform})
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSingleShotRetriesSendTheSameIdempotencyKey(t *testing.T) {
+	shrinkUploads(t, 1<<20, 64<<10)
+	var keys []string
+	var fails int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tool/upload/files" {
+			http.NotFound(w, r)
+			return
+		}
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		_, _ = io.Copy(io.Discard, r.Body)
+		fails++
+		if fails == 1 {
+			writeEnvelope(w, 503, nil, 5000, "busy", nil)
+			return
+		}
+		writeEnvelope(w, 201, map[string]any{"file_uid": "file-1", "status": "clean"}, 0, "", nil)
+	}))
+	defer srv.Close()
+	path, sum := randomFile(t, 1000)
+	if _, err := uploadBuildFile(testClient(srv.URL), buildFileUpload{Path: path, Size: 1000, Checksum: sum, BuildID: "b1", Platform: testPlatform}); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] || !strings.Contains(keys[0], sum) || !strings.Contains(keys[0], "b1") {
+		t.Fatalf("keys = %v", keys)
 	}
 }
 

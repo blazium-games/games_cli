@@ -61,6 +61,102 @@ func TestZipSingleFileUsesBaseName(t *testing.T) {
 	}
 }
 
+func TestScanSkipsHiddenFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "game.exe"))
+	writeFile(t, filepath.Join(dir, ".env"))
+	writeFile(t, filepath.Join(dir, ".git", "config"))
+	writeFile(t, filepath.Join(dir, "certs", "server.pem"))
+	files, err := ScanFileDirectory(dir, fileScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		got[f] = true
+	}
+	if !got[filepath.Join(dir, "game.exe")] || !got[filepath.Join(dir, "certs", "server.pem")] {
+		t.Fatalf("files = %v", files)
+	}
+	if got[filepath.Join(dir, ".env")] || got[filepath.Join(dir, ".git", "config")] {
+		t.Fatalf("hidden files included: %v", files)
+	}
+	if !secretFile(filepath.Join(dir, "certs", "server.pem")) || !secretFile(filepath.Join(dir, ".env")) {
+		t.Fatal("secret names were not recognized")
+	}
+	hidden, err := ScanFileDirectory(dir, fileScanOptions{IncludeHidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hidden) != 4 {
+		t.Fatalf("include-hidden files = %v", hidden)
+	}
+}
+
+func TestScanAndZipRefuseSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "secret")
+	writeFile(t, target)
+	link := filepath.Join(dir, "key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip(err)
+	}
+	if _, err := ScanFileDirectory(dir, fileScanOptions{}); err == nil {
+		t.Fatal("symlink accepted by the scan")
+	}
+	out := filepath.Join(dir, "out.zip")
+	if err := CreateZip(out, []string{link}); err == nil {
+		t.Fatal("symlink packed into the zip")
+	}
+	if err := createZip(out, []string{link}, true); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.OpenReader(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	if len(zr.File) != 1 || strings.Contains(zr.File[0].Name, "..") {
+		t.Fatalf("zip name %v", zr.File)
+	}
+}
+
+func TestZipNamesNeverContainDotDot(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "ok.txt")
+	writeFile(t, f)
+	names, err := zipEntryNames([]string{f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if name == ".." || strings.Contains(name, "../") || strings.Contains(name, `..\`) {
+			t.Fatalf("zip name %q", name)
+		}
+	}
+}
+
+func TestCreateZipRefusesSymlinkOutput(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "out.zip")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip(err)
+	}
+	src := filepath.Join(dir, "a.txt")
+	writeFile(t, src)
+	if err := CreateZip(link, []string{src}); err == nil {
+		t.Fatal("symlink zip output accepted")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "keep" {
+		t.Fatalf("target overwritten: %q %v", got, err)
+	}
+}
+
 func TestZipRejectsCollidingNames(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "x", "Game.pck")

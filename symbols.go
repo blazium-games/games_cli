@@ -3,12 +3,23 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
+)
+
+// These match games_upload's Breakpad MODULE line: exactly five fields,
+// a known os, a short arch, a hex debug id, and a single module name.
+var (
+	symbolModuleRe  = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,255}$`)
+	symbolDebugIDRe = regexp.MustCompile(`^[A-F0-9]{8,64}$`)
+	symbolArchRe    = regexp.MustCompile(`^[a-z0-9_]{1,16}$`)
+	symbolOSes      = map[string]bool{"windows": true, "linux": true, "mac": true, "ios": true, "android": true}
 )
 
 // symbolUpload is a prepared symbols payload: one .sym or one .zip of .sym files.
@@ -49,15 +60,31 @@ func prepareSymbols(path string) (*symbolUpload, error) {
 }
 
 // checkSymHeader requires the Breakpad "MODULE <os> <arch> <id> <name>" first line.
+// A module name with a space is more than five fields and is rejected, matching
+// the upload service.
 func checkSymHeader(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return usageErrorf("cannot open %s: %v", path, err)
 	}
 	defer f.Close()
-	line, _ := bufio.NewReader(f).ReadString('\n')
-	if parts := strings.Fields(line); len(parts) < 5 || parts[0] != "MODULE" {
+	line, _ := bufio.NewReader(io.LimitReader(f, 4096)).ReadString('\n')
+	parts := strings.Fields(strings.TrimSpace(line))
+	if len(parts) != 5 || parts[0] != "MODULE" {
 		return usageErrorf("%s is not a Breakpad symbol file (the first line must be MODULE <os> <arch> <id> <name>)", path)
+	}
+	if !symbolOSes[strings.ToLower(parts[1])] {
+		return usageErrorf("%s has unsupported symbol os %q", path, parts[1])
+	}
+	if !symbolArchRe.MatchString(strings.ToLower(parts[2])) {
+		return usageErrorf("%s has an invalid symbol arch", path)
+	}
+	if !symbolDebugIDRe.MatchString(strings.ToUpper(parts[3])) {
+		return usageErrorf("%s has an invalid debug id", path)
+	}
+	module := parts[4]
+	if !symbolModuleRe.MatchString(module) || strings.Contains(module, "..") {
+		return usageErrorf("%s has an invalid module name", path)
 	}
 	return nil
 }
@@ -177,7 +204,8 @@ func uploadSymbols(c *Client, buildID, path string) (map[string]any, error) {
 	return withRetry("symbols upload", func() (map[string]any, error) {
 		resp, _, err := c.PostMultipart(c.filesURL("/tool/upload/symbols"),
 			[]formField{{"build_id", buildID}, {"checksum", sum}},
-			[]formFile{{Field: "file", Path: up.Path, Name: name, Length: -1}}, nil)
+			[]formFile{{Field: "file", Path: up.Path, Name: name, Length: -1}},
+			map[string]string{"Idempotency-Key": idempotencyKey(sum, buildID)})
 		if err != nil {
 			return nil, err
 		}
