@@ -48,7 +48,7 @@ func emitError(err error) {
 	if errors.As(err, &ae) {
 		out["code"] = ae.Code
 		out["status"] = ae.Status
-		if h := codeHint(ae.Code); h != "" {
+		if h := codeHint(ae.Status, ae.Code); h != "" {
 			out["hint"] = h
 		}
 	}
