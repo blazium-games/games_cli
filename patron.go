@@ -6,11 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// patronHTTPClient is the timed client for account API calls. Tests replace it.
+var patronHTTPClient = newHTTPClient
 
 func init() {
 	patronCmd.PersistentFlags().String("user-token", "", "Account access token (overrides BLAZIUM_USER_TOKEN). This is not a deploy key.")
@@ -47,10 +52,7 @@ var patronStatusCmd = &cobra.Command{
 	Short: "Show the signed-in account's patron memberships",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		developer, _ := cmd.Flags().GetString("developer")
-		path := "/private/patron/status"
-		if developer != "" {
-			path += "?developer=" + developer
-		}
+		path := patronQuery("/private/patron/status", "developer", developer)
 		return printUserAPI(cmd, http.MethodGet, path, nil)
 	},
 }
@@ -68,7 +70,7 @@ var patronGetCmd = &cobra.Command{
 	Short: "Show one patron of the signed-in developer",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return printUserAPI(cmd, http.MethodGet, "/private/patrons/"+args[0], nil)
+		return printUserAPI(cmd, http.MethodGet, patronResource("/private/patrons", args[0]), nil)
 	},
 }
 
@@ -105,17 +107,11 @@ var tierUpdateCmd = &cobra.Command{
 	Short: "Change a tier's name, price, or whether it is shown",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		body := map[string]any{}
-		if name, _ := cmd.Flags().GetString("name"); name != "" {
-			body["name"] = name
+		body, err := tierUpdateBody(cmd)
+		if err != nil {
+			return err
 		}
-		if price, _ := cmd.Flags().GetInt64("price-cents"); price >= 50 {
-			body["price_cents"] = price
-		}
-		if active, _ := cmd.Flags().GetString("active"); active == "true" || active == "false" {
-			body["active"] = active == "true"
-		}
-		return printUserAPI(cmd, http.MethodPut, "/private/tiers/"+args[0], body)
+		return printUserAPI(cmd, http.MethodPut, patronResource("/private/tiers", args[0]), body)
 	},
 }
 
@@ -124,7 +120,7 @@ var tierDeleteCmd = &cobra.Command{
 	Short: "Delete a tier that has no pending or active membership",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return printUserAPI(cmd, http.MethodDelete, "/private/tiers/"+args[0], nil)
+		return printUserAPI(cmd, http.MethodDelete, patronResource("/private/tiers", args[0]), nil)
 	},
 }
 
@@ -147,6 +143,81 @@ func postBody(cmd *cobra.Command) map[string]any {
 	return map[string]any{"title": title, "body": body, "status": status, "visibility": visibility, "tier_uids": tiers}
 }
 
+func postUpdateBody(cmd *cobra.Command) (map[string]any, error) {
+	body := map[string]any{}
+	if cmd.Flags().Changed("title") {
+		title, _ := cmd.Flags().GetString("title")
+		body["title"] = title
+	}
+	if cmd.Flags().Changed("body") {
+		text, _ := cmd.Flags().GetString("body")
+		body["body"] = text
+	}
+	if cmd.Flags().Changed("status") {
+		status, _ := cmd.Flags().GetString("status")
+		if status != "draft" && status != "published" {
+			return nil, usageErrorf("--status must be draft or published")
+		}
+		body["status"] = status
+	}
+	if cmd.Flags().Changed("visibility") {
+		visibility, _ := cmd.Flags().GetString("visibility")
+		if visibility != "public" && visibility != "tiers" {
+			return nil, usageErrorf("--visibility must be public or tiers")
+		}
+		body["visibility"] = visibility
+	}
+	if cmd.Flags().Changed("tier") {
+		tiers, _ := cmd.Flags().GetStringSlice("tier")
+		body["tier_uids"] = tiers
+	}
+	if len(body) == 0 {
+		return nil, usageErrorf("pass --title, --body, --status, --visibility, or --tier")
+	}
+	return body, nil
+}
+
+func tierUpdateBody(cmd *cobra.Command) (map[string]any, error) {
+	body := map[string]any{}
+	if cmd.Flags().Changed("name") {
+		name, _ := cmd.Flags().GetString("name")
+		if strings.TrimSpace(name) == "" {
+			return nil, usageErrorf("--name cannot be empty")
+		}
+		body["name"] = name
+	}
+	if cmd.Flags().Changed("price-cents") {
+		price, _ := cmd.Flags().GetInt64("price-cents")
+		if price < 50 {
+			return nil, usageErrorf("--price-cents must be at least 50")
+		}
+		body["price_cents"] = price
+	}
+	if cmd.Flags().Changed("active") {
+		active, _ := cmd.Flags().GetString("active")
+		on, err := strconv.ParseBool(active)
+		if err != nil {
+			return nil, usageErrorf("--active must be true or false")
+		}
+		body["active"] = on
+	}
+	if len(body) == 0 {
+		return nil, usageErrorf("pass --name, --price-cents, or --active")
+	}
+	return body, nil
+}
+
+func patronResource(base, id string) string {
+	return strings.TrimRight(base, "/") + "/" + url.PathEscape(id)
+}
+
+func patronQuery(path, key, value string) string {
+	if value == "" {
+		return path
+	}
+	return path + "?" + key + "=" + url.QueryEscape(value)
+}
+
 var postCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a public or tier-locked post",
@@ -160,7 +231,11 @@ var postUpdateCmd = &cobra.Command{
 	Short: "Edit a post",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return printUserAPI(cmd, http.MethodPut, "/private/posts/"+args[0], postBody(cmd))
+		body, err := postUpdateBody(cmd)
+		if err != nil {
+			return err
+		}
+		return printUserAPI(cmd, http.MethodPut, patronResource("/private/posts", args[0]), body)
 	},
 }
 
@@ -169,7 +244,7 @@ var postDeleteCmd = &cobra.Command{
 	Short: "Remove a post",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return printUserAPI(cmd, http.MethodDelete, "/private/posts/"+args[0], nil)
+		return printUserAPI(cmd, http.MethodDelete, patronResource("/private/posts", args[0]), nil)
 	},
 }
 
@@ -199,9 +274,9 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := patronHTTPClient().Do(req)
 	if err != nil {
-		return err
+		return &networkError{err: err}
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))

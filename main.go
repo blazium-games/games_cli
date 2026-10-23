@@ -42,8 +42,8 @@ page images. The website and MCP can view and delete these, but not upload.
 ` + authHelp + `
 
 Exit codes: 0 success, 1 usage or validation error, 2 API error, 3 network
-error after retries. With --json, the result (or error) is one JSON object on
-stdout and progress goes to stderr.
+error (uploads retry first). With --json, the result (or error) is one JSON
+object on stdout and progress goes to stderr.
 
 Docs: https://docs.blazium.games/docs/cli`,
 	SilenceUsage:  true,
@@ -505,15 +505,33 @@ func readSecret(r io.Reader) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+// wantsJSON reports whether args include --json. Unknown commands never reach
+// flag parsing, so the flag is read from the raw arguments before Execute.
+func wantsJSON(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" || arg == "--json=true" {
+			return true
+		}
+	}
+	return false
+}
+
+func reportCommandError(err error) {
+	if jsonOutput {
+		emitError(err)
+		return
+	}
+	fmt.Fprintf(stderr, "Error: %v\n", err)
+}
+
 func main() {
+	if wantsJSON(os.Args[1:]) {
+		jsonOutput = true
+	}
 	err := rootCmd.Execute()
 	if err == nil {
 		return
 	}
-	if jsonOutput {
-		emitError(err)
-	} else {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-	}
+	reportCommandError(err)
 	os.Exit(exitCode(err))
 }

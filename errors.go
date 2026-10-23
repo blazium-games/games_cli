@@ -6,7 +6,7 @@ import (
 )
 
 // Exit codes: 0 success, 1 usage or validation error, 2 API error, 3 network
-// error after retries.
+// error (uploads retry first).
 const (
 	exitOK      = 0
 	exitUsage   = 1
@@ -41,7 +41,7 @@ func (e *apiError) Error() string {
 	} else {
 		msg = "API error: " + msg
 	}
-	if h := codeHint(e.Code); h != "" {
+	if h := codeHint(e.Status, e.Code); h != "" {
 		msg += "\n  hint: " + h
 	}
 	return msg
@@ -63,6 +63,7 @@ var codeHints = map[int]string{
 	4037: "the upload body could not be read; the file field must come after the form fields.",
 	4038: "the build could not be identified; pass the build_id printed by chauffeur build.",
 	4039: "the build was not found for this deploy key's game.",
+	4512: "the listing is locked by moderation.",
 	4041: "os, arch, channel, checksum or filename is invalid. os: " + osHelp + "; arch: " + archHelp + "; build files must be .zip. A web build also needs web_engine, web_version, and web_variant.",
 	4042: "the build request body is not valid JSON.",
 	4043: "the file is too large (5 GB per build file, 512 MB per symbol file).",
@@ -83,7 +84,17 @@ var codeHints = map[int]string{
 	4291: "too many open upload sessions for this game; wait for one to finish or expire.",
 }
 
-func codeHint(code int) string { return codeHints[code] }
+func codeHint(status, code int) string {
+	if code == 4039 {
+		switch status {
+		case 403:
+			return "the project owner is suspended."
+		case 404:
+			return "the build was not found for this deploy key's game."
+		}
+	}
+	return codeHints[code]
+}
 
 func exitCode(err error) int {
 	if err == nil {

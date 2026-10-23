@@ -252,6 +252,9 @@ jobs:
             test -n "$src"
             mkdir -p "npm/packages/${pkg}/bin"
             cp "$src" "npm/packages/${pkg}/bin/${exe}"
+            if [ "$exe" != "chauffeur.exe" ]; then
+              chmod 0755 "npm/packages/${pkg}/bin/${exe}"
+            fi
             cp LICENSE "npm/packages/${pkg}/LICENSE"
           }
           stage linux amd64 cli-linux-x64 chauffeur

@@ -10,6 +10,9 @@
   "cpu": [
     "arm64"
   ],
+  "bin": {
+    "chauffeur": "bin/chauffeur"
+  },
   "files": [
     "bin",
     "README.md",

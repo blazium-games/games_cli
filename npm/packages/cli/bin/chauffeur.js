@@ -197,8 +197,23 @@ async function downloadBinary(spec, dest, version, pin) {
   }
 }
 
+function launchResult(bin, spawnFn, chmodFn) {
+  const spawn = spawnFn || ((target) => spawnSync(target, process.argv.slice(2), { stdio: "inherit" }));
+  const chmod = chmodFn || ((target, mode) => fs.chmodSync(target, mode));
+  let result = spawn(bin);
+  if (result && result.error && result.error.code === "EACCES") {
+    try {
+      chmod(bin, 0o755);
+    } catch (err) {
+      return result;
+    }
+    result = spawn(bin);
+  }
+  return result;
+}
+
 function run(bin) {
-  const result = spawnSync(bin, process.argv.slice(2), { stdio: "inherit" });
+  const result = launchResult(bin);
   if (result.error) {
     fail(result.error.message);
   }
@@ -217,8 +232,15 @@ async function main() {
   const pkgName = `@blazium-games/cli-${process.platform}-${process.arch}`;
   const installed = optionalBin(pkgName, spec.exe);
   if (installed) {
-    run(installed);
-    return;
+    const result = launchResult(installed);
+    if (!(result.error && result.error.code === "EACCES")) {
+      if (result.error) {
+        fail(result.error.message);
+      }
+      process.exit(result.status === null ? 1 : result.status);
+      return;
+    }
+    console.error(`Could not execute ${installed}. Falling back to the CDN download.`);
   }
 
   const root = wrapperRoot();
@@ -252,4 +274,5 @@ module.exports = {
   loadPins,
   pinFor,
   assertChecksum,
+  launchResult,
 };

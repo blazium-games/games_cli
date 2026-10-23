@@ -26,7 +26,7 @@ var lobbyCmd = &cobra.Command{
 
 var lobbyPublishCmd = &cobra.Command{
 	Use:   "publish --dir <path>",
-	Short: "Pack every .lua file and upload it for this game",
+	Short: "Pack every .lua and .luau file and upload it for this game",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := deployClient(cmd)
 		if err != nil {
@@ -73,15 +73,28 @@ var lobbySetCmd = &cobra.Command{
 }
 
 func init() {
-	lobbyPublishCmd.Flags().StringVar(&lobbyDir, "dir", "", "Directory of .lua files")
-	lobbyPublishCmd.Flags().StringVar(&lobbyTypeFlag, "type", "", "Lobby type name")
+	lobbyPublishCmd.Flags().StringVar(&lobbyDir, "dir", "", "Directory of .lua and .luau files")
+	lobbyPublishCmd.Flags().StringVar(&lobbyTypeFlag, "type", "", "relay or scripted (optional)")
 	_ = lobbyPublishCmd.MarkFlagRequired("dir")
 	lobbySetCmd.Flags().StringVar(&lobbySetEnabled, "enabled", "", "true or false")
 	lobbySetCmd.Flags().StringVar(&lobbySetType, "type", "", "relay or scripted")
 	lobbySetCmd.Flags().StringVar(&lobbySetIce, "ice", "", "true or false")
 }
 
+func normalizeLobbyType(lobbyType string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(lobbyType)) {
+	case "", "relay", "scripted", "lua":
+		return strings.ToLower(strings.TrimSpace(lobbyType)), nil
+	default:
+		return "", usageErrorf("lobby_type must be relay or scripted")
+	}
+}
+
 func runLobbyPublish(client *Client, dir, lobbyType string) error {
+	lobbyType, err := normalizeLobbyType(lobbyType)
+	if err != nil {
+		return err
+	}
 	files, err := lobbyLuaFiles(dir)
 	if err != nil {
 		return err
@@ -138,7 +151,11 @@ func lobbySetBody(enabled, lobbyType, ice string) (map[string]any, error) {
 		body["enabled"] = on
 	}
 	if lobbyType != "" {
-		body["lobby_type"] = lobbyType
+		normalized, err := normalizeLobbyType(lobbyType)
+		if err != nil {
+			return nil, err
+		}
+		body["lobby_type"] = normalized
 	}
 	if ice != "" {
 		on, err := strconv.ParseBool(ice)
@@ -181,18 +198,37 @@ func runLobbyStatus(client *Client) error {
 	return nil
 }
 
+func refusedLobbyExt(ext string) bool {
+	switch ext {
+	case ".as", ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".py", ".gd":
+		return true
+	default:
+		return false
+	}
+}
+
 func lobbyLuaFiles(dir string) ([]lobbyFile, error) {
 	var files []lobbyFile
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
+		name := info.Name()
 		if info.IsDir() {
+			if path != dir && strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 || strings.HasPrefix(name, ".") {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".as" || ext != ".lua" {
-			return usageErrorf("lobby packs are Luau only; refused %s", path)
+		if ext != ".lua" && ext != ".luau" {
+			if refusedLobbyExt(ext) {
+				return usageErrorf("lobby packs are Luau only; refused %s", path)
+			}
+			return nil
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -209,7 +245,7 @@ func lobbyLuaFiles(dir string) ([]lobbyFile, error) {
 		return nil, err
 	}
 	if len(files) == 0 {
-		return nil, usageErrorf("no .lua files under %s", dir)
+		return nil, usageErrorf("no .lua or .luau files under %s", dir)
 	}
 	return files, nil
 }
