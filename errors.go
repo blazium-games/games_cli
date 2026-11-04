@@ -58,7 +58,7 @@ func (e *networkError) Error() string { return "network error: " + e.err.Error()
 func (e *networkError) Unwrap() error { return e.err }
 
 var codeHints = map[int]string{
-	4025: "the deploy key was rejected. Check BLAZIUM_ACCESS_TOKEN and BLAZIUM_SECRET_KEY, or issue a new key on the dashboard (this invalidates the old one).",
+	4025: "the deploy key was rejected. Check BLAZIUM_ACCESS_TOKEN and BLAZIUM_SECRET_KEY. The access token is on the Deploy keys tab. The secret cannot be shown again, so a missing token is not fixed by creating a new key.",
 	4026: "a build field is missing or too long: version (32), title (255), description (10000), changelog (100 entries), demo_url (http/https, 255), engine_version (like 4.3).",
 	4037: "the upload body could not be read; the file field must come after the form fields.",
 	4038: "the build could not be identified; pass the build_id printed by chauffeur build.",
