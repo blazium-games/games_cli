@@ -24,13 +24,13 @@ var (
 	assetFile   string
 )
 
-const authHelp = `Authentication uses the game's deploy key, issued on the game's dashboard
-(or through MCP request_deploy_key):
+const authHelp = `A deploy key is two values for one project: an access token and a secret. chauffeur and CI need both.
+Get them on the Deploy keys tab, or from MCP request_deploy_key.
 
-  BLAZIUM_ACCESS_TOKEN   access token (or --access)
-  BLAZIUM_SECRET_KEY     secret key (or --secret-stdin; avoid --secret)
+  BLAZIUM_ACCESS_TOKEN   access token, sent as X-Access-Token (or --access). It stays on the Deploy keys tab.
+  BLAZIUM_SECRET_KEY     secret, sent as X-Secret-Key (or --secret-stdin; avoid --secret). It is shown once. It cannot be shown again.
 
-Issuing a new deploy key invalidates the previous one.`
+Creating a new deploy key replaces the previous one. Uploads that used the old key stop working.`
 
 var rootCmd = &cobra.Command{
 	Use:   "chauffeur",
@@ -381,8 +381,8 @@ func init() {
 	rootCmd.Version = version
 
 	pf := rootCmd.PersistentFlags()
-	pf.StringVarP(&accessToken, "access", "", "", "Deploy key access token (overrides BLAZIUM_ACCESS_TOKEN)")
-	pf.StringVarP(&secretKey, "secret", "", "", "Deploy key secret (visible to other processes; prefer BLAZIUM_SECRET_KEY or --secret-stdin)")
+	pf.StringVarP(&accessToken, "access", "", "", "Access token (overrides BLAZIUM_ACCESS_TOKEN). Sent as X-Access-Token.")
+	pf.StringVarP(&secretKey, "secret", "", "", "Secret (visible to other processes; prefer BLAZIUM_SECRET_KEY or --secret-stdin). Sent as X-Secret-Key.")
 	pf.Bool("secret-stdin", false, "Read the deploy key secret from the first line of stdin")
 	pf.StringVarP(&apiURL, "url", "", defaultAPIURL, "API base URL (overrides BLAZIUM_API_URL)")
 	pf.String("upload", defaultUploadURL, "Upload service base URL (overrides BLAZIUM_UPLOAD_URL)")
