@@ -80,6 +80,11 @@ var codeHints = map[int]string{
 	4153: "a public listing needs a cover and thumbnail; replace it instead of deleting.",
 	4154: "the order must list every gallery image uid exactly once (see chauffeur media list).",
 	4166: "a filter is invalid. os: " + osHelp + "; arch: " + archHelp + ".",
+	4300: "the Scripted API request is invalid; check the scope, channel, key and name.",
+	4308: "the game is over its plan's Scripted API storage limit, so data is read-only. Delete data or upgrade the plan.",
+	4313: "the Scripted API data store is unavailable; try again shortly.",
+	4317: "that channel is not one of this game's release channels.",
+	4322: "the Scripted API service is unavailable; try again shortly.",
 	4290: "rate limited; wait a while and try again.",
 	4291: "too many open upload sessions for this game; wait for one to finish or expire.",
 }
