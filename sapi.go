@@ -257,7 +257,7 @@ var sapiSecretSetCmd = &cobra.Command{
 
 var sapiSecretDeleteCmd = &cobra.Command{
 	Use:   "delete <name>",
-	Short: "Delete a secret (asks the account owner to approve)",
+	Short: "Delete a secret",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := sapiNamedPath("/tool/sapi/secrets", args[0], sapiChannel)
