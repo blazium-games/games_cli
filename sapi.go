@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const sapiDevBinaryURL = "https://cdn.blazium.games/tools/games_sapi/linux-amd64/games_sapi"
+const sapiDevBinaryURL = "https://cdn.blazium.online/tools/games_sapi/linux-amd64/games_sapi"
 
 var (
 	sapiChannelRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
