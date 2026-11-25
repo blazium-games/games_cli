@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -50,6 +51,8 @@ var (
 	sapiLogLogic  string
 	sapiLogLevel  string
 	sapiLogSince  string
+	sapiLogUntil  string
+	sapiLogCursor string
 	sapiLogReq    string
 	sapiLogLimit  int
 	sapiPublic    bool
@@ -170,7 +173,7 @@ var sapiLogsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "Read recent script logs",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path, err := sapiLogsPath(sapiLogLogic, sapiChannel, sapiLogLevel, sapiLogReq, sapiLogSince, sapiLogLimit)
+		path, err := sapiLogsPath(sapiLogLogic, sapiChannel, sapiLogLevel, sapiLogReq, sapiLogSince, sapiLogUntil, sapiLogCursor, sapiLogLimit)
 		if err != nil {
 			return err
 		}
@@ -471,7 +474,9 @@ func init() {
 	sapiLogsCmd.Flags().StringVar(&sapiLogLogic, "logic", "", "Only this logic")
 	sapiLogsCmd.Flags().StringVar(&sapiChannel, "channel", "", "Only this channel")
 	sapiLogsCmd.Flags().StringVar(&sapiLogLevel, "level", "", "debug, info, warn or error")
-	sapiLogsCmd.Flags().StringVar(&sapiLogSince, "since", "", "Only lines after this time (RFC 3339 or Unix ms)")
+	sapiLogsCmd.Flags().StringVar(&sapiLogSince, "since", "", "Only lines after this: a time (RFC 3339 or Unix ms) or how long ago (30m, 2h, 7d)")
+	sapiLogsCmd.Flags().StringVar(&sapiLogUntil, "until", "", "Only lines up to this: a time (RFC 3339 or Unix ms) or how long ago (30m, 2h, 7d)")
+	sapiLogsCmd.Flags().StringVar(&sapiLogCursor, "cursor", "", "Continue from the next_cursor a full page printed (older lines)")
 	sapiLogsCmd.Flags().StringVar(&sapiLogReq, "request-id", "", "Only lines for one request")
 	sapiLogsCmd.Flags().IntVar(&sapiLogLimit, "limit", 200, "Most lines to return")
 
@@ -784,7 +789,33 @@ func sapiActivateBody(checksum, channel string) (map[string]string, error) {
 	return map[string]string{"checksum": sum, "channel": ch}, nil
 }
 
-func sapiLogsPath(logic, channel, level, requestID, since string, limit int) (string, error) {
+var (
+	sapiNow     = time.Now
+	sapiAgoRe   = regexp.MustCompile(`^([1-9][0-9]{0,5})([smhd])$`)
+	sapiCursorR = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
+)
+
+// sapiLogTime turns a flag into what the log API reads: Unix milliseconds or RFC 3339 pass through,
+// and "15m", "2h" or "7d" become that long before now.
+func sapiLogTime(flag, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if m := sapiAgoRe.FindStringSubmatch(value); m != nil {
+		n, _ := strconv.ParseInt(m[1], 10, 64)
+		unit := map[string]time.Duration{"s": time.Second, "m": time.Minute, "h": time.Hour, "d": 24 * time.Hour}[m[2]]
+		return strconv.FormatInt(sapiNow().Add(-time.Duration(n)*unit).UnixMilli(), 10), nil
+	}
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return value, nil
+	}
+	if _, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return value, nil
+	}
+	return "", usageErrorf("--%s must be Unix milliseconds, an RFC 3339 time, or how long ago such as 30m, 2h or 7d", flag)
+}
+
+func sapiLogsPath(logic, channel, level, requestID, since, until, cursor string, limit int) (string, error) {
 	q := url.Values{}
 	if logic != "" {
 		if !sapiLogicRe.MatchString(logic) {
@@ -809,8 +840,20 @@ func sapiLogsPath(logic, channel, level, requestID, since string, limit int) (st
 	if requestID != "" {
 		q.Set("request_id", requestID)
 	}
-	if since != "" {
-		q.Set("since", since)
+	for _, t := range []struct{ flag, key, value string }{{"since", "since", since}, {"until", "until", until}} {
+		v, err := sapiLogTime(t.flag, t.value)
+		if err != nil {
+			return "", err
+		}
+		if v != "" {
+			q.Set(t.key, v)
+		}
+	}
+	if cursor != "" {
+		if !sapiCursorR.MatchString(cursor) {
+			return "", usageErrorf("--cursor is the next_cursor a full page printed")
+		}
+		q.Set("cursor", cursor)
 	}
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(min(limit, 1000)))
@@ -1097,6 +1140,9 @@ func printSapiLogs(d map[string]any) {
 	}
 	if len(list) == 0 {
 		logf("no log lines\n")
+	}
+	if next, _ := d["next_cursor"].(string); next != "" {
+		logf("more: --cursor %s\n", next)
 	}
 }
 

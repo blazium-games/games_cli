@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSapiActivateBody(t *testing.T) {
@@ -80,15 +82,43 @@ func TestSapiValueAndConfig(t *testing.T) {
 }
 
 func TestSapiLogsPath(t *testing.T) {
-	path, err := sapiLogsPath("submit_score", "beta", "error", "", "", 5000)
+	path, err := sapiLogsPath("submit_score", "beta", "error", "", "", "", "", 5000)
 	if err != nil || path != "/tool/sapi/logs?channel=beta&level=error&limit=1000&logic=submit_score" {
 		t.Fatalf("%q %v", path, err)
 	}
-	if _, err := sapiLogsPath("", "", "loud", "", "", 0); err == nil {
+	if _, err := sapiLogsPath("", "", "loud", "", "", "", "", 0); err == nil {
 		t.Fatal("accepted a bad level")
 	}
-	if _, err := sapiLogsPath("../x", "", "", "", "", 0); err == nil {
+	if _, err := sapiLogsPath("../x", "", "", "", "", "", "", 0); err == nil {
 		t.Fatal("accepted a bad logic")
+	}
+}
+
+func TestSapiLogsPathTimesAndCursor(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	saved := sapiNow
+	sapiNow = func() time.Time { return now }
+	defer func() { sapiNow = saved }()
+
+	path, err := sapiLogsPath("", "", "", "", "30m", "2026-01-01T11:59:00Z", "4503599627370497", 0)
+	want := "/tool/sapi/logs?cursor=4503599627370497&since=" + strconv.FormatInt(now.Add(-30*time.Minute).UnixMilli(), 10) + "&until=2026-01-01T11%3A59%3A00Z"
+	if err != nil || path != want {
+		t.Fatalf("%q %v", path, err)
+	}
+	path, err = sapiLogsPath("", "", "", "", "1767225600000", "7d", "", 0)
+	if err != nil || path != "/tool/sapi/logs?since=1767225600000&until="+strconv.FormatInt(now.Add(-7*24*time.Hour).UnixMilli(), 10) {
+		t.Fatalf("%q %v", path, err)
+	}
+	for _, bad := range [][2]string{{"since", "yesterday"}, {"since", "0m"}, {"until", "2026-01-01"}, {"until", "5w"}} {
+		args := map[string]string{bad[0]: bad[1]}
+		if _, err := sapiLogsPath("", "", "", "", args["since"], args["until"], "", 0); err == nil {
+			t.Fatalf("accepted --%s %q", bad[0], bad[1])
+		}
+	}
+	for _, bad := range []string{"abc", "-1", "0", "1 2", "99999999999999999999"} {
+		if _, err := sapiLogsPath("", "", "", "", "", "", bad, 0); err == nil {
+			t.Fatalf("accepted cursor %q", bad)
+		}
 	}
 }
 
