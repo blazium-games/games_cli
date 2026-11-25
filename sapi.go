@@ -64,6 +64,13 @@ var (
 	sapiTTL       int64
 	sapiOut       string
 	sapiToChannel string
+
+	sapiResetScope   string
+	sapiResetChannel string
+	sapiResetUser    string
+	sapiResetPrefix  string
+	sapiResetConfirm string
+	sapiResetDry     bool
 )
 
 var sapiCmd = &cobra.Command{
@@ -424,6 +431,34 @@ var sapiDataImportCmd = &cobra.Command{
 	},
 }
 
+var sapiDataResetCmd = &cobra.Command{
+	Use:   "reset --scope global|channel|user --confirm <game id>",
+	Short: "Delete many stored values at once (use --dry-run to count first)",
+	Long: "Deletes every key in a scope, or only the keys that start with --prefix. With --scope channel and no --channel it covers every channel; " +
+		"with --scope user and no --user it covers every player. --dry-run only counts what would be removed. " +
+		"--confirm must be this game's id. The whole-game purge is not available here; use the dashboard or MCP.",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path, err := sapiResetPath(sapiResetScope, sapiResetChannel, sapiResetUser, sapiResetPrefix, sapiResetConfirm, sapiResetDry)
+		if err != nil {
+			return err
+		}
+		client, err := deployClient(cmd)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Delete(path)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return emit(resp.Data)
+		}
+		printSapiReset(resp.Data)
+		return nil
+	},
+}
+
 var sapiDataCopyCmd = &cobra.Command{
 	Use:   "copy --channel <from> --to <to>",
 	Short: "Copy every key in one channel's data into another channel",
@@ -500,10 +535,17 @@ func init() {
 	sapiDataCopyCmd.Flags().StringVar(&sapiToChannel, "to", "", "Channel to copy into")
 	sapiDataCopyCmd.Flags().StringVar(&sapiPrefix, "prefix", "", "Only keys starting with this")
 
+	sapiDataResetCmd.Flags().StringVar(&sapiResetScope, "scope", "", "global, channel or user (required)")
+	sapiDataResetCmd.Flags().StringVar(&sapiResetChannel, "channel", "", "Only this release channel (channel scope)")
+	sapiDataResetCmd.Flags().StringVar(&sapiResetUser, "user", "", "Only this player (user scope)")
+	sapiDataResetCmd.Flags().StringVar(&sapiResetPrefix, "prefix", "", "Only keys starting with this")
+	sapiDataResetCmd.Flags().StringVar(&sapiResetConfirm, "confirm", "", "This game's id (required)")
+	sapiDataResetCmd.Flags().BoolVar(&sapiResetDry, "dry-run", false, "Count what would be removed and change nothing")
+
 	sapiConfigCmd.AddCommand(sapiConfigGetCmd, sapiConfigSetCmd, sapiConfigDeleteCmd)
 	sapiSecretCmd.AddCommand(sapiSecretListCmd, sapiSecretSetCmd, sapiSecretDeleteCmd)
 	sapiSchedulesCmd.AddCommand(sapiSchedulesRunCmd)
-	sapiDataCmd.AddCommand(sapiDataListCmd, sapiDataGetCmd, sapiDataSetCmd, sapiDataDeleteCmd, sapiDataExportCmd, sapiDataImportCmd, sapiDataCopyCmd)
+	sapiDataCmd.AddCommand(sapiDataListCmd, sapiDataGetCmd, sapiDataSetCmd, sapiDataDeleteCmd, sapiDataExportCmd, sapiDataImportCmd, sapiDataCopyCmd, sapiDataResetCmd)
 	sapiCmd.AddCommand(sapiPublishCmd, sapiValidateCmd, sapiTestCmd, sapiDevCmd, sapiStatusCmd, sapiPacksCmd, sapiActivateCmd,
 		sapiLogsCmd, sapiUsageCmd, sapiConfigCmd, sapiSecretCmd, sapiSchedulesCmd, sapiDataCmd)
 }
@@ -1191,6 +1233,72 @@ func printSapiJobs(d map[string]any) {
 	if len(schedules) == 0 && len(runs) == 0 {
 		logf("no scheduled logic\n")
 	}
+}
+
+// sapiResetPath checks a reset request before anything is sent.
+func sapiResetPath(scope, channel, user, prefix, confirm string, dry bool) (string, error) {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	switch scope {
+	case "":
+		return "", usageErrorf("--scope is required: global, channel or user")
+	case "global":
+		if channel != "" || user != "" {
+			return "", usageErrorf("the global scope takes no --channel or --user")
+		}
+	case "channel":
+		if user != "" {
+			return "", usageErrorf("the channel scope takes no --user")
+		}
+	case "user":
+		if channel != "" {
+			return "", usageErrorf("the user scope takes no --channel")
+		}
+		if user == "" && prefix != "" {
+			return "", usageErrorf("--prefix needs one player: add --user, or drop --prefix to reset every player")
+		}
+	default:
+		return "", usageErrorf("--scope must be global, channel or user")
+	}
+	ch, err := sapiOptionalChannel(channel)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(confirm) == "" {
+		return "", usageErrorf("--confirm needs this game's id")
+	}
+	q := url.Values{"scope": {scope}, "confirm": {strings.TrimSpace(confirm)}}
+	if ch != "" {
+		q.Set("channel", ch)
+	}
+	if user != "" {
+		q.Set("user", user)
+	}
+	if prefix != "" {
+		q.Set("prefix", prefix)
+	}
+	if dry {
+		q.Set("dry_run", "true")
+	}
+	return "/tool/sapi/data?" + q.Encode(), nil
+}
+
+func printSapiReset(d map[string]any) {
+	num := func(k string) int64 {
+		v, _ := d[k].(float64)
+		return int64(v)
+	}
+	verb := "Deleted"
+	if dry, _ := d["dry_run"].(bool); dry {
+		verb = "Would delete"
+	}
+	logf("%s %d keys (%d bytes)", verb, num("keys"), num("bytes"))
+	if n := num("users"); n > 0 {
+		logf(" across %d players", n)
+	}
+	if n := num("channels"); n > 0 {
+		logf(" in %d channels", n)
+	}
+	logf("\n")
 }
 
 func printSapiData(d map[string]any) {

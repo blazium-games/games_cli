@@ -273,3 +273,33 @@ func TestSapiCommandsRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestSapiResetPath(t *testing.T) {
+	path, err := sapiResetPath("Channel", "beta", "", "season:", "game-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/tool/sapi/data?channel=beta&confirm=game-1&dry_run=true&prefix=season%3A&scope=channel" {
+		t.Fatalf("path %q", path)
+	}
+	path, err = sapiResetPath("user", "", "", "", "game-1", false)
+	if err != nil || path != "/tool/sapi/data?confirm=game-1&scope=user" {
+		t.Fatalf("%q %v", path, err)
+	}
+	bad := [][5]string{
+		{"", "", "", "", "g"},
+		{"boards", "", "", "", "g"},
+		{"global", "beta", "", "", "g"},
+		{"global", "", "u1", "", "g"},
+		{"channel", "", "u1", "", "g"},
+		{"user", "beta", "", "", "g"},
+		{"user", "", "", "save:", "g"},
+		{"channel", "Bad Channel", "", "", "g"},
+		{"global", "", "", "", ""},
+	}
+	for _, b := range bad {
+		if _, err := sapiResetPath(b[0], b[1], b[2], b[3], b[4], false); err == nil {
+			t.Fatalf("accepted %v", b)
+		}
+	}
+}
