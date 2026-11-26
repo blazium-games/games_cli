@@ -43,9 +43,38 @@ actions["GET:bootstrap"] = function(req)
     return router.ok({ features = features, enabled = enabled, absent = absent, plan = req.plan, channel = req.channel })
 end
 
+-- Moves one player into another, feature by feature, in one request so the writes commit together. Platform and service
+-- callers only: POST /internal/games/{game}/merge-user runs it after a guest signs in. A feature that is not in the pack or
+-- is turned off is skipped, and so is one with nothing stored for the player being merged.
+local MERGE_ORDER = { "economy", "daily", "lives", "wheel", "chests", "quests", "meta", "competitions", "leaderboards" }
+
+local function merge_users(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged, skipped = {}, {}
+    for _, id in ipairs(MERGE_ORDER) do
+        local ok, result = pcall(api.call, id .. "/merge", { from = from, to = to })
+        if ok and not router.failed(result) and result.data and result.data.merged then
+            table.insert(merged, id)
+        else
+            table.insert(skipped, id)
+        end
+    end
+    return router.ok({ merged = merged, skipped = skipped })
+end
+
+actions["POST:merge"] = merge_users
+actions["CALL:merge"] = merge_users
+
 return {
     auth = "user",
-    methods = { "GET" },
+    methods = { "GET", "POST" },
     rate = { per_user = 30, window = 60 },
     description = "Bootstrap: every installed feature's status in one request",
     handler = router.dispatch(actions),

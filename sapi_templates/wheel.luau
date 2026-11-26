@@ -115,6 +115,28 @@ actions["POST:spin"] = function(req)
     return router.ok(out, version)
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        local out = state.combine(a, b, { day = "max", extra = "sum" })
+        -- Spins used count for the day they were used on, so the newer day wins and a tie takes the larger.
+        if (a.day or 0) > (b.day or 0) then
+            out.used = a.used
+        elseif (a.day or 0) == (b.day or 0) then
+            out.used = math.max(a.used or 0, b.used or 0)
+        end
+        return out
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "user",
     methods = { "GET", "POST" },

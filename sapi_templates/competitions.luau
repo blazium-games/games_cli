@@ -216,6 +216,33 @@ actions["POST:claim_season"] = function(req)
     return router.ok({ season = body.season, rank = my_rank, reward = won }, version)
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        local out = state.combine(a, b, { season = "max", g = "max", played = "sum", day = "max", seen = "union", claimed = "union" })
+        -- Points and the day count belong to a season and a day. The newer one wins, and the same one adds up.
+        if (a.season or 0) > (b.season or 0) then
+            out.pts = a.pts
+        elseif (a.season or 0) == (b.season or 0) then
+            out.pts = (a.pts or 0) + (b.pts or 0)
+        end
+        if (a.day or 0) > (b.day or 0) then
+            out.today = a.today
+        elseif (a.day or 0) == (b.day or 0) then
+            out.today = (a.today or 0) + (b.today or 0)
+        end
+        return out
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "user",
     methods = { "GET", "POST" },

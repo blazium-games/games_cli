@@ -203,6 +203,33 @@ actions["POST:claim"] = function(req)
     return router.fail(404, "unknown_quest", "that quest is not active today")
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        local out = state.combine(a, b, { d = "max", w = "max" })
+        -- Progress belongs to a day or a week. The newer period wins, and the same period adds progress up.
+        local function period(field, progress, claimed)
+            if (a[field] or 0) > (b[field] or 0) then
+                out[progress], out[claimed] = a[progress], a[claimed]
+            elseif (a[field] or 0) == (b[field] or 0) then
+                out[progress] = state.combine({ x = a[progress] }, { x = b[progress] }, { x = "maxmap" }).x
+                out[claimed] = state.combine({ x = a[claimed] }, { x = b[claimed] }, { x = "union" }).x
+            end
+        end
+        period("d", "dp", "dc")
+        period("w", "wp", "wc")
+        return out
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "user",
     methods = { "GET", "POST" },

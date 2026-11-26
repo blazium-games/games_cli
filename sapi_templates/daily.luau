@@ -162,6 +162,24 @@ actions["POST:dispenser"] = function(req)
     return router.ok({ reward = d.reward, ready_in = d.cooldown_sec }, version)
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        local out = state.combine(a, b, { last = "max", streak = "max", best = "max" })
+        -- Each dispenser keeps the later of the two last-claim times, so a merge never makes one ready sooner.
+        out.disp = state.combine({ x = a.disp }, { x = b.disp }, { x = "maxmap" }).x
+        return out
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "user",
     methods = { "GET", "POST" },

@@ -199,6 +199,21 @@ actions["POST:submit"] = function(req)
     return router.ok({ board = body.board, rank = standing(board(body.board)) }, version)
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        return state.combine(a, b, { runs = "sum" })
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "anonymous",
     methods = { "GET", "POST" },

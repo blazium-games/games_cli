@@ -362,6 +362,36 @@ actions["CALL:debit"] = function(req)
     return router.ok({ wallet = s.w }, version)
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        local out = state.combine(a, b, { w = "summap", own = "union", boost = "summap", up = "maxmap", day = "max" })
+        -- What was equipped stays as the surviving account had it, and gains slots it had empty.
+        out.eq = {}
+        for k, v in pairs(a.eq or {}) do
+            out.eq[k] = v
+        end
+        for k, v in pairs(b.eq or {}) do
+            out.eq[k] = v
+        end
+        -- Run settlements count against a day's cap: the newer day wins and the same day adds up.
+        if (a.day or 0) > (b.day or 0) then
+            out.settled = a.settled
+        elseif (a.day or 0) == (b.day or 0) then
+            out.settled = state.combine({ x = a.settled }, { x = b.settled }, { x = "summap" }).x
+        end
+        return out
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "user",
     methods = { "GET", "POST" },

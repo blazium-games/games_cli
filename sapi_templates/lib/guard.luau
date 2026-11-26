@@ -35,4 +35,14 @@ function guard.count(value, max)
     return true
 end
 
+-- The two different player ids of a merge call, or a failure envelope. Used by the CALL:merge action of each feature.
+function guard.merge(req)
+    local body = req.body or {}
+    local from, to = body.from, body.to
+    if type(from) ~= "string" or type(to) ~= "string" or from == "" or to == "" or #from > 64 or #to > 64 or from == to then
+        return nil, nil, router.bad_request("from and to must be two different player ids")
+    end
+    return from, to, nil
+end
+
 return guard

@@ -206,6 +206,29 @@ actions["CALL:grant"] = function(req)
     return router.ok(view(s, c, now), version)
 end
 
+actions["CALL:merge"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    local from, to, bad = guard.merge(req)
+    if bad then
+        return bad
+    end
+    local c = conf(req)
+    local merged = state.merge_user(KEY, from, to, function(a, b)
+        local out = state.combine(a, b, { unl = "max", gday = "max", t = "max" })
+        out.n = math.min(c.max, (a.n or 0) + (b.n or 0))
+        if (a.gday or 0) > (b.gday or 0) then
+            out.gsent = a.gsent
+        elseif (a.gday or 0) == (b.gday or 0) then
+            out.gsent = (a.gsent or 0) + (b.gsent or 0)
+        end
+        return out
+    end)
+    return router.ok({ merged = merged })
+end
+
 return {
     auth = "user",
     methods = { "GET", "POST" },
