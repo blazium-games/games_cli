@@ -184,31 +184,11 @@ func (c *Client) GetJSON(endpoint string) (*APIResponse, error) {
 // DownloadFile writes rawURL to dest. The deploy key is sent only when the URL
 // is on the API host. A redirect to another host drops it.
 func (c *Client) DownloadFile(rawURL, dest string) error {
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return usageErrorf("invalid download URL")
-	}
-	if u.Scheme != "https" && !loopbackHost(u.Hostname()) {
-		return usageErrorf("download URL must use https")
-	}
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	resp, err := c.download(rawURL)
 	if err != nil {
 		return err
 	}
-	api, _ := url.Parse(c.baseURL)
-	if api != nil && strings.EqualFold(u.Host, api.Host) {
-		req.Header.Set("X-Access-Token", c.accessToken)
-		req.Header.Set("X-Secret-Key", c.secretKey)
-	}
-	req.Header.Set("User-Agent", "chauffeur/"+version)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return &networkError{err: scrubError(err, c.secretKey, c.accessToken)}
-	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed: %s", resp.Status)
-	}
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -228,6 +208,52 @@ func (c *Client) DownloadFile(rawURL, dest string) error {
 		return fmt.Errorf("download is larger than 40 MB")
 	}
 	return nil
+}
+
+// DownloadBytes reads rawURL into memory under the same rules as DownloadFile.
+func (c *Client) DownloadBytes(rawURL string) ([]byte, error) {
+	resp, err := c.download(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxDownloadBytes {
+		return nil, fmt.Errorf("download is larger than 40 MB")
+	}
+	return body, nil
+}
+
+func (c *Client) download(rawURL string) (*http.Response, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return nil, usageErrorf("invalid download URL")
+	}
+	if u.Scheme != "https" && !loopbackHost(u.Hostname()) {
+		return nil, usageErrorf("download URL must use https")
+	}
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	api, _ := url.Parse(c.baseURL)
+	if api != nil && strings.EqualFold(u.Host, api.Host) {
+		req.Header.Set("X-Access-Token", c.accessToken)
+		req.Header.Set("X-Secret-Key", c.secretKey)
+	}
+	req.Header.Set("User-Agent", "chauffeur/"+version)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &networkError{err: scrubError(err, c.secretKey, c.accessToken)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("download failed: %s", resp.Status)
+	}
+	return resp, nil
 }
 
 func loopbackHost(host string) bool {
