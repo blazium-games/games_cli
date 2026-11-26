@@ -428,7 +428,7 @@ func WriteYAMLFile(filename string, config *Config) error {
 		return fmt.Errorf("failed to marshal YAML: %w", err)
 	}
 
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := writeFileNoFollow(filename, data, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 

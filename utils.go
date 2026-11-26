@@ -236,15 +236,7 @@ func secretFile(path string) bool {
 }
 
 func openZipOutput(path string) (*os.File, error) {
-	if st, err := os.Lstat(path); err == nil {
-		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
-			return nil, fmt.Errorf("refusing to write the zip through %s", path)
-		}
-		return os.OpenFile(path, os.O_RDWR|os.O_TRUNC, 0o600)
-	} else if !os.IsNotExist(err) {
-		return nil, err
-	}
-	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	return openForOverwrite(path, 0o600)
 }
 
 // ScanFileDirectory collects regular files under dirPath.

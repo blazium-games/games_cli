@@ -209,7 +209,7 @@ func (c *Client) DownloadFile(rawURL, dest string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed: %s", resp.Status)
 	}
-	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := openForOverwrite(dest, 0o600)
 	if err != nil {
 		return err
 	}
