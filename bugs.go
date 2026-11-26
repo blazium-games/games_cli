@@ -51,7 +51,7 @@ Screenshots and logs are saved with the screenshot, log, and pull commands.`,
 			return nil
 		}
 		for _, row := range bugs {
-			logf("%s  %s  %s\n", str(row["uid"]), str(row["status"]), str(row["message"]))
+			logf("%s  %s  %s\n", termSafe(str(row["uid"])), termSafe(str(row["status"])), termSafe(str(row["message"])))
 		}
 		return nil
 	},

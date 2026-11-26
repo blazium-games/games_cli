@@ -284,7 +284,7 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 		return fmt.Errorf("patron request failed: %s", strings.TrimSpace(string(raw)))
 	}
 	if jsonOutput {
-		fmt.Println(string(raw))
+		fmt.Println(termText(string(raw)))
 		return nil
 	}
 	var env struct {
@@ -292,9 +292,9 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 	}
 	if json.Unmarshal(raw, &env) == nil && env.Data != nil {
 		out, _ := json.MarshalIndent(env.Data, "", "  ")
-		fmt.Println(string(out))
+		fmt.Println(termText(string(out)))
 		return nil
 	}
-	fmt.Println(string(raw))
+	fmt.Println(termText(string(raw)))
 	return nil
 }

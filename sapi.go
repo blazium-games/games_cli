@@ -335,7 +335,7 @@ var sapiDataGetCmd = &cobra.Command{
 					return emit(item)
 				}
 				raw, _ := json.MarshalIndent(item["value"], "", "  ")
-				fmt.Fprintln(stdout, string(raw))
+				fmt.Fprintln(stdout, termText(string(raw)))
 				return nil
 			}
 		}
@@ -391,7 +391,7 @@ var sapiDataExportCmd = &cobra.Command{
 		}
 		raw, _ := json.MarshalIndent(items, "", "  ")
 		if sapiOut == "" {
-			fmt.Fprintln(stdout, string(raw))
+			fmt.Fprintln(stdout, termText(string(raw)))
 			return nil
 		}
 		if err := os.WriteFile(sapiOut, append(raw, '\n'), 0o600); err != nil {
@@ -1178,7 +1178,7 @@ func printSapiLogs(d map[string]any) {
 	list, _ := d["lines"].([]any)
 	for _, v := range list {
 		l, _ := v.(map[string]any)
-		logf("%v %-5v %v/%v %v %v\n", l["ts"], l["level"], l["channel"], l["logic"], l["request_id"], l["message"])
+		logf("%v %-5v %v/%v %v %s\n", l["ts"], l["level"], l["channel"], l["logic"], l["request_id"], termSafe(fmt.Sprint(l["message"])))
 	}
 	if len(list) == 0 {
 		logf("no log lines\n")
@@ -1228,7 +1228,7 @@ func printSapiJobs(d map[string]any) {
 	}
 	for _, v := range runs {
 		r, _ := v.(map[string]any)
-		logf("  %v %v %v %v\n", r["logic"], r["channel"], r["status"], r["error"])
+		logf("  %v %v %v %s\n", r["logic"], r["channel"], r["status"], termSafe(fmt.Sprint(r["error"])))
 	}
 	if len(schedules) == 0 && len(runs) == 0 {
 		logf("no scheduled logic\n")
@@ -1305,7 +1305,7 @@ func printSapiData(d map[string]any) {
 	items := sapiItems(d)
 	for _, item := range items {
 		raw, _ := json.Marshal(item["value"])
-		logf("%v = %s\n", item["key"], raw)
+		logf("%s = %s\n", termSafe(fmt.Sprint(item["key"])), raw)
 	}
 	if len(items) == 0 {
 		logf("no keys\n")

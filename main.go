@@ -521,7 +521,7 @@ func reportCommandError(err error) {
 		emitError(err)
 		return
 	}
-	fmt.Fprintf(stderr, "Error: %v\n", err)
+	fmt.Fprintf(stderr, "Error: %s\n", termText(err.Error()))
 }
 
 func main() {
