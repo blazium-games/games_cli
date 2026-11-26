@@ -94,7 +94,16 @@ var sapiValidateCmd = &cobra.Command{
 	Use:   "validate --dir <path>",
 	Short: "Check a pack against a plan's limits before publishing",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSapiValidate(sapiDir, sapiPlan, sapiBinary)
+		if err := runSapiValidate(sapiDir, sapiPlan, sapiBinary); err != nil {
+			return err
+		}
+		// With a deploy key to hand, say which logic files belong to features that are off. Without one, say nothing.
+		if client, err := deployClient(cmd); err == nil {
+			if files, ferr := lobbyLuaFiles(sapiDir); ferr == nil {
+				warnDisabledFeatures(client, files)
+			}
+		}
+		return nil
 	},
 }
 
@@ -122,9 +131,16 @@ var sapiDevCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		env, err := sapiDevEnv(sapiDir, sapiPlan, sapiPort, sapiUsers)
+		features, err := sapiDevFeatures(sapiDevAll, sapiDevList)
 		if err != nil {
 			return err
+		}
+		env, err := sapiDevEnv(sapiDir, sapiPlan, sapiPort, sapiUsers, features)
+		if err != nil {
+			return err
+		}
+		if features != "" {
+			logf("Emulating a game with these features on: %s\n", features)
 		}
 		logf("Scripted API emulator on http://127.0.0.1:%d/v1/dev/<logic> (Ctrl+C to stop)\n", sapiPort)
 		return runSapiBinary(bin, nil, env)
@@ -586,6 +602,7 @@ func runSapiPublish(client *Client, dir, channel string, activate bool) error {
 	if err != nil {
 		return err
 	}
+	warnDisabledFeatures(client, files)
 	if jsonOutput {
 		return emit(map[string]any{"ok": true, "checksum": checksum, "data": resp.Data})
 	}
@@ -765,7 +782,7 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func sapiDevEnv(dir, plan string, port int, users string) ([]string, error) {
+func sapiDevEnv(dir, plan string, port int, users, features string) ([]string, error) {
 	plan, err := sapiPlanName(plan)
 	if err != nil {
 		return nil, err
@@ -787,6 +804,9 @@ func sapiDevEnv(dir, plan string, port int, users string) ([]string, error) {
 			return nil, err
 		}
 		env = append(env, "SAPI_DEV_USERS="+u)
+	}
+	if features != "" {
+		env = append(env, "SAPI_DEV_FEATURES="+features)
 	}
 	return env, nil
 }

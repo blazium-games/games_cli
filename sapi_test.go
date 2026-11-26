@@ -175,7 +175,7 @@ func TestSapiValidateWithoutBinary(t *testing.T) {
 
 func TestSapiDevEnv(t *testing.T) {
 	dir := t.TempDir()
-	env, err := sapiDevEnv(dir, "business", 9000, "")
+	env, err := sapiDevEnv(dir, "business", 9000, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,10 +185,10 @@ func TestSapiDevEnv(t *testing.T) {
 			t.Fatalf("missing %s in %v", want, env)
 		}
 	}
-	if _, err := sapiDevEnv(dir, "free", 0, ""); err == nil {
+	if _, err := sapiDevEnv(dir, "free", 0, "", ""); err == nil {
 		t.Fatal("accepted port 0")
 	}
-	if _, err := sapiDevEnv(filepath.Join(dir, "nope"), "free", 8787, ""); err == nil {
+	if _, err := sapiDevEnv(filepath.Join(dir, "nope"), "free", 8787, "", ""); err == nil {
 		t.Fatal("accepted a missing dir")
 	}
 }
@@ -201,6 +201,11 @@ func TestSapiPublishSendsChannelAndActivate(t *testing.T) {
 	var fields map[string]string
 	var gotFile bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tool/sapi/features" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"managed": false, "features": []any{}}})
+			return
+		}
 		if r.URL.Path != "/tool/sapi/publish" {
 			t.Errorf("path %s", r.URL.Path)
 		}
