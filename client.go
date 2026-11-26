@@ -44,7 +44,7 @@ func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: 2 * time.Hour,
 		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
+			Proxy:                 proxyForRequest,
 			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			TLSHandshakeTimeout:   30 * time.Second,
 			ResponseHeaderTimeout: 10 * time.Minute,
@@ -53,6 +53,16 @@ func newHTTPClient() *http.Client {
 		},
 		CheckRedirect: checkRedirect,
 	}
+}
+
+// proxyForRequest keeps every host loopbackHost accepts off the proxy. The
+// standard bypass only matches lowercase "localhost", so a loopback API URL
+// spelled any other way would hand the deploy key to the proxy.
+func proxyForRequest(req *http.Request) (*url.URL, error) {
+	if loopbackHost(req.URL.Hostname()) {
+		return nil, nil
+	}
+	return http.ProxyFromEnvironment(req)
 }
 
 func checkRedirect(req *http.Request, via []*http.Request) error {
