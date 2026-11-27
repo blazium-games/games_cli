@@ -166,12 +166,22 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
+          # SHA-256 of the games_sapi Linux amd64 build this release may download and run.
+          SAPI_EMULATOR_SHA256: ${{ vars.SAPI_EMULATOR_SHA256 }}
         run: |
           set -euo pipefail
           ext=""
           [ "$GOOS" = "windows" ] && ext=".exe"
           mkdir -p "dist/${GOOS}-${GOARCH}"
-          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.resolve-version.outputs.simple_version }}" \
+          sapi_pin="$(printf '%s' "${SAPI_EMULATOR_SHA256:-}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+          if [ -n "$sapi_pin" ] && ! printf '%s' "$sapi_pin" | grep -Eqx '[0-9a-f]{64}'; then
+            echo "SAPI_EMULATOR_SHA256 must be a 64-character SHA-256 hex digest" >&2
+            exit 1
+          fi
+          if [ -z "$sapi_pin" ]; then
+            echo "::warning::SAPI_EMULATOR_SHA256 is not set; chauffeur sapi dev will not download the emulator in this release"
+          fi
+          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.resolve-version.outputs.simple_version }} -X main.sapiEmulatorSHA256=${sapi_pin}" \
             -o "dist/${GOOS}-${GOARCH}/chauffeur${ext}" .
 
       - name: Package archive
