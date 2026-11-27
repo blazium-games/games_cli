@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // patronHTTPClient is the timed client for account API calls. Tests replace it.
@@ -257,6 +258,14 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 	if token == "" {
 		return usageErrorf("a user access token is required: set BLAZIUM_USER_TOKEN or pass --user-token. A deploy key cannot call this")
 	}
+	rawBase := strings.TrimSpace(viper.GetString("url"))
+	if err := checkServiceURL(rawBase); err != nil {
+		return err
+	}
+	checked, err := url.Parse(rawBase)
+	if err != nil {
+		return usageErrorf("service URL %s is not a valid URL", redactURL(rawBase))
+	}
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -265,10 +274,14 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 		}
 		body = bytes.NewReader(raw)
 	}
-	base := strings.TrimRight(apiURL, "/")
-	req, err := http.NewRequest(method, base+path, body)
+	target := strings.TrimRight(rawBase, "/") + path
+	req, err := http.NewRequest(method, target, body)
 	if err != nil {
-		return err
+		return usageErrorf("invalid URL %s", redactURL(target))
+	}
+	// The token goes only to the scheme and host checkServiceURL approved.
+	if req.URL.Scheme != checked.Scheme || req.URL.Host != checked.Host || req.URL.User != nil {
+		return usageErrorf("service URL %s does not match the request URL", redactURL(rawBase))
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if payload != nil {
@@ -276,15 +289,15 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 	}
 	res, err := patronHTTPClient().Do(req)
 	if err != nil {
-		return &networkError{err: err}
+		return &networkError{err: scrubError(err, token)}
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode >= 300 {
-		return fmt.Errorf("patron request failed: %s", strings.TrimSpace(string(raw)))
+		return scrubError(fmt.Errorf("patron request failed: %s", strings.TrimSpace(string(raw))), token)
 	}
 	if jsonOutput {
-		fmt.Println(string(raw))
+		fmt.Println(termText(string(raw)))
 		return nil
 	}
 	var env struct {
@@ -292,9 +305,9 @@ func printUserAPI(cmd *cobra.Command, method, path string, payload any) error {
 	}
 	if json.Unmarshal(raw, &env) == nil && env.Data != nil {
 		out, _ := json.MarshalIndent(env.Data, "", "  ")
-		fmt.Println(string(out))
+		fmt.Println(termText(string(out)))
 		return nil
 	}
-	fmt.Println(string(raw))
+	fmt.Println(termText(string(raw)))
 	return nil
 }

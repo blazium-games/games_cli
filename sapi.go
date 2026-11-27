@@ -23,6 +23,12 @@ import (
 
 const sapiDevBinaryURL = "https://cdn.blazium.online/tools/games_sapi/linux-amd64/games_sapi"
 
+// sapiEmulatorSHA256 is the only games_sapi build this release downloads or
+// runs from the chauffeur cache. Release builds set it with
+// -ldflags "-X main.sapiEmulatorSHA256=<sha256 hex>". The CDN's own checksum
+// sits beside the binary, so it cannot stand in for this.
+var sapiEmulatorSHA256 = ""
+
 var (
 	sapiChannelRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	sapiChecksumRe = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -351,7 +357,7 @@ var sapiDataGetCmd = &cobra.Command{
 					return emit(item)
 				}
 				raw, _ := json.MarshalIndent(item["value"], "", "  ")
-				fmt.Fprintln(stdout, string(raw))
+				fmt.Fprintln(stdout, termText(string(raw)))
 				return nil
 			}
 		}
@@ -407,10 +413,10 @@ var sapiDataExportCmd = &cobra.Command{
 		}
 		raw, _ := json.MarshalIndent(items, "", "  ")
 		if sapiOut == "" {
-			fmt.Fprintln(stdout, string(raw))
+			fmt.Fprintln(stdout, termText(string(raw)))
 			return nil
 		}
-		if err := os.WriteFile(sapiOut, append(raw, '\n'), 0o600); err != nil {
+		if err := writeFileNoFollow(sapiOut, append(raw, '\n'), 0o600); err != nil {
 			return err
 		}
 		logf("Wrote %d keys to %s\n", len(items), sapiOut)
@@ -709,10 +715,18 @@ func findSapiBinary(flag string, download bool) (string, error) {
 	if p, err := exec.LookPath("games_sapi"); err == nil {
 		return p, nil
 	}
+	// runSapiBinary verifies the cached file against the pin when it runs it;
+	// the hash here only decides whether a stale copy is worth replacing.
 	cached := sapiCachedBinary()
 	if cached != "" {
 		if info, err := os.Stat(cached); err == nil && !info.IsDir() {
-			return cached, nil
+			pin, pinErr := sapiEmulatorPin()
+			if !download || pinErr != nil {
+				return cached, nil
+			}
+			if got, err := fileSHA256(cached); err == nil && got == pin {
+				return cached, nil
+			}
 		}
 	}
 	if !download {
@@ -735,38 +749,47 @@ func sapiCachedBinary() string {
 	return filepath.Join(dir, "chauffeur", "games_sapi")
 }
 
+func sapiEmulatorPin() (string, error) {
+	pin := strings.ToLower(strings.TrimSpace(sapiEmulatorSHA256))
+	if !sapiChecksumRe.MatchString(pin) {
+		return "", usageErrorf("this chauffeur build has no pinned games_sapi hash, so it will not download or run a cached emulator: pass --binary or set SAPI_BINARY")
+	}
+	return pin, nil
+}
+
 func downloadSapiBinary(dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+	pin, err := sapiEmulatorPin()
+	if err != nil {
 		return err
 	}
 	logf("Downloading the Scripted API emulator from %s\n", sapiDevBinaryURL)
-	c := NewClient("", "", "")
-	sumFile := dest + ".sha256"
-	tmp := dest + ".download"
-	defer os.Remove(sumFile)
-	defer os.Remove(tmp)
-	if err := c.DownloadFile(sapiDevBinaryURL+".sha256", sumFile); err != nil {
-		return fmt.Errorf("downloading the emulator checksum: %w", err)
-	}
-	if err := c.DownloadFile(sapiDevBinaryURL, tmp); err != nil {
+	body, err := NewClient("", "", "").DownloadBytes(sapiDevBinaryURL)
+	if err != nil {
 		return fmt.Errorf("downloading the emulator: %w", err)
 	}
-	want, err := os.ReadFile(sumFile)
+	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != pin {
+		return fmt.Errorf("the downloaded emulator does not match the games_sapi hash pinned in this chauffeur release")
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".games_sapi-*")
 	if err != nil {
 		return err
 	}
-	fields := strings.Fields(string(want))
-	got, err := fileSHA256(tmp)
-	if err != nil {
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
 		return err
 	}
-	if len(fields) == 0 || !strings.EqualFold(fields[0], got) {
-		return fmt.Errorf("the downloaded emulator does not match its checksum")
-	}
-	if err := os.Chmod(tmp, 0o700); err != nil {
+	if err := tmp.Chmod(0o700); err != nil {
+		tmp.Close()
 		return err
 	}
-	return os.Rename(tmp, dest)
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dest)
 }
 
 func fileSHA256(path string) (string, error) {
@@ -812,7 +835,11 @@ func sapiDevEnv(dir, plan string, port int, users, features string) ([]string, e
 }
 
 func runSapiBinary(bin string, args, env []string) error {
-	c := exec.Command(bin, args...)
+	c, done, err := sapiCommand(bin, args)
+	if err != nil {
+		return err
+	}
+	defer done()
 	c.Stdout = stdout
 	c.Stderr = stderr
 	c.Stdin = os.Stdin
@@ -824,6 +851,64 @@ func runSapiBinary(bin string, args, env []string) error {
 		return err
 	}
 	return nil
+}
+
+// sapiCommand runs a binary the user named as it is. The chauffeur-cached
+// emulator is read once into a sealed in-memory file, checked against the pin
+// there and executed from that copy, so replacing the cached file after the
+// check cannot change what runs.
+func sapiCommand(bin string, args []string) (*exec.Cmd, func(), error) {
+	cached := sapiCachedBinary()
+	f, err := os.Open(bin)
+	if err != nil {
+		if cached != "" && sameSapiPath(bin, cached) {
+			return nil, nil, err
+		}
+		return exec.Command(bin, args...), func() {}, nil
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isSapiCache(bin, info, cached) {
+		return exec.Command(bin, args...), func() {}, nil
+	}
+	pin, err := sapiEmulatorPin()
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err := io.ReadAll(io.LimitReader(f, maxDownloadBytes+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	if int64(len(body)) > maxDownloadBytes {
+		return nil, nil, fmt.Errorf("the cached games_sapi emulator at %s does not match the hash pinned in this chauffeur release", bin)
+	}
+	img, err := sealSapiImage(body, pin)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the cached games_sapi emulator at %s: %w", bin, err)
+	}
+	c := exec.Command(sapiImagePath(img), args...)
+	c.Args[0] = "games_sapi"
+	return c, func() { img.Close() }, nil
+}
+
+func isSapiCache(bin string, info os.FileInfo, cached string) bool {
+	if cached == "" {
+		return false
+	}
+	if sameSapiPath(bin, cached) {
+		return true
+	}
+	cachedInfo, err := os.Stat(cached)
+	return err == nil && os.SameFile(info, cachedInfo)
+}
+
+func sameSapiPath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && absA == absB
 }
 
 func sapiOptionalChannel(channel string) (string, error) {
@@ -1198,7 +1283,7 @@ func printSapiLogs(d map[string]any) {
 	list, _ := d["lines"].([]any)
 	for _, v := range list {
 		l, _ := v.(map[string]any)
-		logf("%v %-5v %v/%v %v %v\n", l["ts"], l["level"], l["channel"], l["logic"], l["request_id"], l["message"])
+		logf("%v %-5v %v/%v %v %s\n", l["ts"], l["level"], l["channel"], l["logic"], l["request_id"], termSafe(fmt.Sprint(l["message"])))
 	}
 	if len(list) == 0 {
 		logf("no log lines\n")
@@ -1248,7 +1333,7 @@ func printSapiJobs(d map[string]any) {
 	}
 	for _, v := range runs {
 		r, _ := v.(map[string]any)
-		logf("  %v %v %v %v\n", r["logic"], r["channel"], r["status"], r["error"])
+		logf("  %v %v %v %s\n", r["logic"], r["channel"], r["status"], termSafe(fmt.Sprint(r["error"])))
 	}
 	if len(schedules) == 0 && len(runs) == 0 {
 		logf("no scheduled logic\n")
@@ -1325,7 +1410,7 @@ func printSapiData(d map[string]any) {
 	items := sapiItems(d)
 	for _, item := range items {
 		raw, _ := json.Marshal(item["value"])
-		logf("%v = %s\n", item["key"], raw)
+		logf("%s = %s\n", termSafe(fmt.Sprint(item["key"])), raw)
 	}
 	if len(items) == 0 {
 		logf("no keys\n")

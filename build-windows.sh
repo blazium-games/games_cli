@@ -19,22 +19,31 @@ FULL_VERSION="$MAJOR.$MINOR.$PATCH.$BUILD"
 
 echo "Building Windows executables with version $FULL_VERSION"
 
-# Check if go-winres is installed
-if ! command -v go-winres &> /dev/null; then
-    echo "Installing go-winres..."
-    go install github.com/tc-hib/go-winres@latest
-fi
+# go-winres runs through "go tool" so the version pinned in go.mod and the
+# checksum in go.sum are used, never whatever go-winres is on PATH. It must
+# run before GOOS/GOARCH are exported, or go tool builds it for Windows.
 
 # Create dist directory
 mkdir -p dist/windows-amd64
 
 # Generate resource file for chauffeur CLI
 echo "Generating Windows resources for chauffeur..."
-go-winres make --in winres/chauffeur.json --out . --product-version "$FULL_VERSION" --file-version "$FULL_VERSION"
+go tool go-winres make --in winres/chauffeur.json --out . --product-version "$FULL_VERSION" --file-version "$FULL_VERSION"
 if [ $? -ne 0 ]; then
     echo "Failed to generate resources for chauffeur"
     exit 1
 fi
+
+# Generate resource file for upload tool
+echo "Generating Windows resources for upload tool..."
+cd cmd/upload
+go tool go-winres make --in ../../winres/upload.json --out . --product-version "$FULL_VERSION" --file-version "$FULL_VERSION"
+if [ $? -ne 0 ]; then
+    echo "Failed to generate resources for upload tool"
+    cd ../..
+    exit 1
+fi
+cd ../..
 
 # Build chauffeur CLI
 echo "Building chauffeur CLI..."
@@ -46,17 +55,6 @@ if [ $? -ne 0 ]; then
     echo "Failed to build chauffeur CLI"
     exit 1
 fi
-
-# Generate resource file for upload tool
-echo "Generating Windows resources for upload tool..."
-cd cmd/upload
-go-winres make --in ../../winres/upload.json --out . --product-version "$FULL_VERSION" --file-version "$FULL_VERSION"
-if [ $? -ne 0 ]; then
-    echo "Failed to generate resources for upload tool"
-    cd ../..
-    exit 1
-fi
-cd ../..
 
 # Build upload tool
 echo "Building upload tool..."

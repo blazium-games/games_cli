@@ -6,13 +6,26 @@ end
 local function run(user, score, board_name)
     local started = t.call("leaderboards/start_run", { user = user, body = { board = board_name } })
     t.clock.advance(5)
-    return t.call("leaderboards/submit", { user = user, body = { board = board_name, score = score, run_ticket = started.body.data.run_ticket, details = { moves = 12 } } })
+    return t.call("leaderboards/submit", { service = true, user = user, body = { board = board_name, score = score, run_ticket = started.body.data.run_ticket, details = { moves = 12 } } })
 end
 
 return {
+    players_cannot_submit_their_own_scores = function()
+        local ada = who()
+        local started = t.call("leaderboards/start_run", { user = ada, body = {} })
+        t.clock.advance(5)
+        local r = t.call("leaderboards/submit", { user = ada, body = { board = "main", score = 100, run_ticket = started.body.data.run_ticket } })
+        t.eq(r.status, 403)
+        t.eq(t.call("leaderboards/profile", { method = "GET", user = ada, query = { board = "main" } }).body.data.rank, nil)
+    end,
+
+    a_game_server_must_name_the_player = function()
+        t.eq(t.call("leaderboards/submit", { service = true, body = { board = "main", score = 100 } }).status, 400)
+    end,
+
     submit_needs_a_run_ticket = function()
         local ada = who()
-        local r = t.call("leaderboards/submit", { user = ada, body = { board = "main", score = 10 } })
+        local r = t.call("leaderboards/submit", { service = true, user = ada, body = { board = "main", score = 10 } })
         t.eq(r.status, 409)
         t.eq(r.body.error.key, "bad_ticket")
     end,
@@ -23,14 +36,14 @@ return {
         t.eq(started.status, 200)
         t.clock.advance(5)
         local body = { board = "main", score = 100, run_ticket = started.body.data.run_ticket }
-        t.eq(t.call("leaderboards/submit", { user = ada, body = body }).status, 200)
-        t.eq(t.call("leaderboards/submit", { user = ada, body = body }).status, 409)
+        t.eq(t.call("leaderboards/submit", { service = true, user = ada, body = body }).status, 200)
+        t.eq(t.call("leaderboards/submit", { service = true, user = ada, body = body }).status, 409)
     end,
 
     runs_cannot_finish_faster_than_possible = function()
         local ada = who()
         local started = t.call("leaderboards/start_run", { user = ada, body = {} })
-        local r = t.call("leaderboards/submit", { user = ada, body = { board = "main", score = 5, run_ticket = started.body.data.run_ticket } })
+        local r = t.call("leaderboards/submit", { service = true, user = ada, body = { board = "main", score = 5, run_ticket = started.body.data.run_ticket } })
         t.eq(r.status, 422)
         t.eq(r.body.error.key, "too_fast")
     end,
@@ -65,7 +78,7 @@ return {
         local ada = who()
         local started = t.call("leaderboards/start_run", { user = ada, body = {} })
         t.clock.advance(5)
-        t.eq(t.call("leaderboards/submit", { user = ada, body = { board = "main", score = -1, run_ticket = started.body.data.run_ticket } }).status, 422)
+        t.eq(t.call("leaderboards/submit", { service = true, user = ada, body = { board = "main", score = -1, run_ticket = started.body.data.run_ticket } }).status, 422)
         t.eq(t.call("leaderboards/start_run", { user = ada, body = { board = "no_such" } }).status, 404)
         t.eq(t.call("leaderboards/top", { method = "GET", query = { board = "no_such" } }).status, 404)
     end,
