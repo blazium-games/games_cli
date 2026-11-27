@@ -195,6 +195,10 @@ func runLobbyStatus(client *Client) error {
 		return emit(resp.Data)
 	}
 	logf("active %v load %v matches %v\n", resp.Data["active_checksum"], resp.Data["load_status"], resp.Data["matches_latest"])
+	if l, ok := resp.Data["limits"].(map[string]any); ok {
+		logf("plan %v\n", l["plan"])
+		printLobbyLimits(l)
+	}
 	return nil
 }
 
