@@ -1,7 +1,7 @@
 -- Deterministic daily and weekly quests (spec 02).
 --
 --   GET  /v1/{game}/quests/status     today's and this week's quests with progress
---   POST /v1/{game}/quests/progress   { event, amount? }  report a game event (capped per call)
+--   POST /v1/{game}/quests/progress   { event, amount? }  report a game event (game servers only, naming the player)
 --   POST /v1/{game}/quests/claim      { id }              collect a finished quest
 --   CALL quests/event { event, amount }                   (api.call only, uncapped)
 --
@@ -119,7 +119,8 @@ actions["GET:status"] = function(req)
 end
 
 actions["POST:progress"] = function(req)
-    local denied = guard.user(req)
+    -- A player cannot vouch for their own events: repeated reports would finish any quest without playing.
+    local denied = guard.server(req)
     if denied then
         return denied
     end
@@ -130,27 +131,14 @@ actions["POST:progress"] = function(req)
     if bad then
         return bad
     end
+    if req.user == nil then
+        return router.bad_request("a game server must name the player (X-Sapi-User)")
+    end
     local quests, day, week = active(req, std.time.now())
     local s = load(day, week)
-    -- A client may report at most max_step per call (default: a tenth of the target), so progress cannot be skipped.
-    local amount = body.amount or 1
-    local limited = false
-    for _, list in ipairs({ quests.daily, quests.weekly }) do
-        for _, q in ipairs(list) do
-            if q.event == body.event then
-                local cap = q.max_step or math.max(1, math.floor(q.target / 10))
-                if amount > cap then
-                    amount = cap
-                    limited = true
-                end
-            end
-        end
-    end
-    apply(quests, s, body.event, amount)
+    apply(quests, s, body.event, body.amount or 1)
     local version = state.save(KEY, s)
-    local out = view(quests, s)
-    out.capped = limited
-    return router.ok(out, version)
+    return router.ok(view(quests, s), version)
 end
 
 actions["CALL:event"] = function(req)

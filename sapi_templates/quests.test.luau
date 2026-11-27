@@ -40,8 +40,7 @@ return {
         local ada = who()
         local s = t.call("quests/status", { user = ada, method = "GET" }).body.data
         local quest = s.daily[1]
-        t.call("quests/progress", { user = ada, body = { event = quest.event, amount = 1 } })
-        -- the client may only move a quest a tenth of its target per call, so finish it with an internal event
+        t.call("quests/progress", { service = true, user = ada, body = { event = quest.event, amount = 1 } })
         t.call("quests/event", { user = ada, method = "CALL", body = { event = quest.event, amount = quest.target } })
         local claimed = t.call("quests/claim", { user = ada, body = { id = quest.id } })
         t.eq(claimed.status, 200)
@@ -57,14 +56,25 @@ return {
         t.eq(t.call("quests/claim", { user = ada, body = { id = "not_a_quest" } }).status, 404)
     end,
 
-    client_progress_is_capped_per_call = function()
+    players_cannot_report_their_own_progress = function()
         local ada = who()
         local s = t.call("quests/status", { user = ada, method = "GET" }).body.data
         local quest = s.daily[1]
-        local r = t.call("quests/progress", { user = ada, body = { event = quest.event, amount = 10000 } })
+        local r = t.call("quests/progress", { user = ada, body = { event = quest.event, amount = quest.target } })
+        t.eq(r.status, 403)
+        local after = t.call("quests/status", { user = ada, method = "GET" }).body.data
+        t.eq(after.daily[1].progress, 0)
+    end,
+
+    a_game_server_reports_progress_for_a_player = function()
+        local ada = who()
+        local s = t.call("quests/status", { user = ada, method = "GET" }).body.data
+        local quest = s.daily[1]
+        local r = t.call("quests/progress", { service = true, user = ada, body = { event = quest.event, amount = quest.target } })
         t.eq(r.status, 200)
-        t.eq(r.body.data.capped, true)
-        t.ok(r.body.data.daily[1].progress < quest.target + 1)
+        t.eq(r.body.data.daily[1].done, true)
+        t.eq(t.call("quests/progress", { service = true, body = { event = quest.event } }).status, 400)
+        t.eq(t.call("quests/claim", { user = ada, body = { id = quest.id } }).status, 200)
     end,
 
     daily_progress_resets_at_midnight_utc = function()
