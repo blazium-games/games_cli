@@ -24,7 +24,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Wrapper checksum tests
         if: runner.os == 'Linux'
@@ -33,7 +33,7 @@ jobs:
       - name: Check env.example
         run: python3 scripts/check_env_example.py || python scripts/check_env_example.py
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -63,13 +63,13 @@ jobs:
     outputs:
       simple_version: ${{ steps.finalize.outputs.simple_version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Get Version with Bioblaze/game-semver-action
         id: version
-        uses: Bioblaze/game-semver-action@v10
+        uses: Bioblaze/game-semver-action@ed2e83561fc3b591c6046da0a36722994c659657 # v10
         with:
           personal_github_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -121,10 +121,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -207,7 +207,7 @@ jobs:
               --storage STANDARD
           done
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: chauffeur-${{ matrix.goos }}-${{ matrix.arch }}
           path: |
@@ -222,14 +222,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: chauffeur-*
           path: dist/bins
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
