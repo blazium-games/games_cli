@@ -27,46 +27,6 @@ func TestSapiParseFeatureList(t *testing.T) {
 	}
 }
 
-func TestSapiDevFeatures(t *testing.T) {
-	got, err := sapiDevFeatures(false, "")
-	if err != nil || got != "" {
-		t.Fatalf("default stays unmanaged: %q %v", got, err)
-	}
-	got, err = sapiDevFeatures(true, "")
-	if err != nil || !strings.Contains(got, "economy") || !strings.Contains(got, "lobby_data") || strings.Count(got, ",") != 15 {
-		t.Fatalf("%q %v", got, err)
-	}
-	got, err = sapiDevFeatures(false, "lives")
-	if err != nil || got != "economy,lives" {
-		t.Fatalf("lives pulls in economy: %q %v", got, err)
-	}
-	if got, _ := sapiDevFeatures(false, "none"); got != "none" {
-		t.Fatalf("%q", got)
-	}
-	if _, err := sapiDevFeatures(true, "daily"); err == nil {
-		t.Fatal("accepted both flags")
-	}
-	if _, err := sapiDevFeatures(false, "nope"); err == nil {
-		t.Fatal("accepted a bad id")
-	}
-}
-
-func TestSapiDevEnvCarriesTheFeatures(t *testing.T) {
-	env, err := sapiDevEnv(t.TempDir(), "free", 8787, "", "daily,hub")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, e := range env {
-		if e == "SAPI_DEV_FEATURES=daily,hub" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("%v", env)
-	}
-}
-
 func TestSapiScaffoldWritesHelpersAndTheChosenScripts(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "pack")
 	written, skipped, err := sapiScaffold(dir, []string{"lives"}, false)

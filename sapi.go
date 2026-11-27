@@ -10,9 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,14 +18,6 @@ import (
 
 	"github.com/spf13/cobra"
 )
-
-const sapiDevBinaryURL = "https://cdn.blazium.online/tools/games_sapi/linux-amd64/games_sapi"
-
-// sapiEmulatorSHA256 is the only games_sapi build this release downloads or
-// runs from the chauffeur cache. Release builds set it with
-// -ldflags "-X main.sapiEmulatorSHA256=<sha256 hex>". The CDN's own checksum
-// sits beside the binary, so it cannot stand in for this.
-var sapiEmulatorSHA256 = ""
 
 var (
 	sapiChannelRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
@@ -52,8 +42,6 @@ var (
 	sapiActivate  bool
 	sapiPlan      string
 	sapiBinary    string
-	sapiPort      int
-	sapiUsers     string
 	sapiLogLogic  string
 	sapiLogLevel  string
 	sapiLogSince  string
@@ -117,7 +105,7 @@ var sapiTestCmd = &cobra.Command{
 	Use:   "test --dir <path>",
 	Short: "Run the pack's *.test.luau files with the local emulator",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		bin, err := findSapiBinary(sapiBinary, false)
+		bin, err := findSapiBinary(sapiBinary)
 		if err != nil {
 			return err
 		}
@@ -125,31 +113,28 @@ var sapiTestCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return runSapiBinary(bin, []string{"--test", sapiDir, "--plan", plan}, nil)
+		return runSapiBinary(bin, []string{"--test", sapiDir, "--plan", plan})
 	},
 }
 
+// sapiDevCmd publishes the pack to one channel of the live game and activates it there. There is no local
+// emulator: the game's own dev channel is the test environment, so the channel is always named.
 var sapiDevCmd = &cobra.Command{
-	Use:   "dev --dir <path>",
-	Short: "Serve the pack locally with the Scripted API emulator",
+	Use:   "dev --dir <path> --channel <name>",
+	Short: "Publish the pack and serve it on a channel of the live game",
+	Long: "Publish the pack and activate it on the named channel of the live game. This changes what that channel serves " +
+		"for players, so name a channel that is meant to run the pack (for example a beta channel). " +
+		"The deploy key must belong to the game.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		bin, err := findSapiBinary(sapiBinary, true)
+		channel, err := prepareSapiDev(sapiDir, sapiPlan, sapiChannel)
 		if err != nil {
 			return err
 		}
-		features, err := sapiDevFeatures(sapiDevAll, sapiDevList)
+		client, err := deployClient(cmd)
 		if err != nil {
 			return err
 		}
-		env, err := sapiDevEnv(sapiDir, sapiPlan, sapiPort, sapiUsers, features)
-		if err != nil {
-			return err
-		}
-		if features != "" {
-			logf("Emulating a game with these features on: %s\n", features)
-		}
-		logf("Scripted API emulator on http://127.0.0.1:%d/v1/dev/<logic> (Ctrl+C to stop)\n", sapiPort)
-		return runSapiBinary(bin, nil, env)
+		return runSapiPublish(client, sapiDir, channel, true)
 	},
 }
 
@@ -520,13 +505,18 @@ func init() {
 	}
 	for _, c := range []*cobra.Command{sapiValidateCmd, sapiTestCmd, sapiDevCmd} {
 		c.Flags().StringVar(&sapiPlan, "plan", "free", "Plan limits to apply: free, premium or business")
+	}
+	for _, c := range []*cobra.Command{sapiValidateCmd, sapiTestCmd} {
 		c.Flags().StringVar(&sapiBinary, "binary", "", "Path to the games_sapi binary (default: SAPI_BINARY, then PATH)")
 	}
-	sapiPublishCmd.Flags().StringVar(&sapiChannel, "channel", "stable", "Release channel the pack is for")
+	// --channel has no default anywhere it changes a live game: a missing channel is an error, not stable.
+	sapiPublishCmd.Flags().StringVar(&sapiChannel, "channel", "", "Release channel the pack is for (required)")
+	_ = sapiPublishCmd.MarkFlagRequired("channel")
 	sapiPublishCmd.Flags().BoolVar(&sapiActivate, "activate", false, "Serve the pack on the channel once it validates")
-	sapiActivateCmd.Flags().StringVar(&sapiChannel, "channel", "stable", "Release channel")
-	sapiDevCmd.Flags().IntVar(&sapiPort, "port", 8787, "Local port")
-	sapiDevCmd.Flags().StringVar(&sapiUsers, "users", "", "JSON file of fake users for the emulator")
+	sapiActivateCmd.Flags().StringVar(&sapiChannel, "channel", "", "Release channel to serve the pack on (required)")
+	_ = sapiActivateCmd.MarkFlagRequired("channel")
+	sapiDevCmd.Flags().StringVar(&sapiChannel, "channel", "", "Release channel of the live game to publish and serve the pack on (required)")
+	_ = sapiDevCmd.MarkFlagRequired("channel")
 
 	sapiLogsCmd.Flags().StringVar(&sapiLogLogic, "logic", "", "Only this logic")
 	sapiLogsCmd.Flags().StringVar(&sapiChannel, "channel", "", "Only this channel")
@@ -573,12 +563,9 @@ func init() {
 }
 
 func runSapiPublish(client *Client, dir, channel string, activate bool) error {
-	channel, err := sapiOptionalChannel(channel)
+	channel, err := sapiRequiredChannel(channel)
 	if err != nil {
 		return err
-	}
-	if channel == "" {
-		channel = "stable"
 	}
 	files, err := lobbyLuaFiles(dir)
 	if err != nil {
@@ -686,9 +673,9 @@ func runSapiValidate(dir, plan, binary string) error {
 	if err != nil {
 		return err
 	}
-	bin, findErr := findSapiBinary(binary, false)
+	bin, findErr := findSapiBinary(binary)
 	if findErr == nil {
-		return runSapiBinary(bin, []string{"--validate", dir, "--plan", plan}, nil)
+		return runSapiBinary(bin, []string{"--validate", dir, "--plan", plan})
 	}
 	if strings.TrimSpace(binary) != "" || strings.TrimSpace(os.Getenv("SAPI_BINARY")) != "" {
 		return findErr
@@ -701,9 +688,9 @@ func runSapiValidate(dir, plan, binary string) error {
 	return nil
 }
 
-// findSapiBinary looks for the games_sapi binary in --binary, SAPI_BINARY,
-// PATH and the chauffeur cache. download fetches it when none is found.
-func findSapiBinary(flag string, download bool) (string, error) {
+// findSapiBinary looks for the games_sapi binary in --binary, SAPI_BINARY and PATH. Nothing is downloaded:
+// validate and test run the binary the developer already has.
+func findSapiBinary(flag string) (string, error) {
 	for _, candidate := range []string{flag, os.Getenv("SAPI_BINARY")} {
 		if candidate = strings.TrimSpace(candidate); candidate != "" {
 			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -715,135 +702,34 @@ func findSapiBinary(flag string, download bool) (string, error) {
 	if p, err := exec.LookPath("games_sapi"); err == nil {
 		return p, nil
 	}
-	// runSapiBinary verifies the cached file against the pin when it runs it;
-	// the hash here only decides whether a stale copy is worth replacing.
-	cached := sapiCachedBinary()
-	if cached != "" {
-		if info, err := os.Stat(cached); err == nil && !info.IsDir() {
-			pin, pinErr := sapiEmulatorPin()
-			if !download || pinErr != nil {
-				return cached, nil
-			}
-			if got, err := fileSHA256(cached); err == nil && got == pin {
-				return cached, nil
-			}
-		}
-	}
-	if !download {
-		return "", usageErrorf("the games_sapi binary was not found: pass --binary or set SAPI_BINARY")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || cached == "" {
-		return "", usageErrorf("the games_sapi emulator is built for Linux amd64: run chauffeur in WSL or a Linux container, or pass --binary")
-	}
-	if err := downloadSapiBinary(cached); err != nil {
-		return "", err
-	}
-	return cached, nil
+	return "", usageErrorf("the games_sapi binary was not found: pass --binary or set SAPI_BINARY")
 }
 
-func sapiCachedBinary() string {
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "chauffeur", "games_sapi")
-}
-
-func sapiEmulatorPin() (string, error) {
-	pin := strings.ToLower(strings.TrimSpace(sapiEmulatorSHA256))
-	if !sapiChecksumRe.MatchString(pin) {
-		return "", usageErrorf("this chauffeur build has no pinned games_sapi hash, so it will not download or run a cached emulator: pass --binary or set SAPI_BINARY")
-	}
-	return pin, nil
-}
-
-func downloadSapiBinary(dest string) error {
-	pin, err := sapiEmulatorPin()
-	if err != nil {
-		return err
-	}
-	logf("Downloading the Scripted API emulator from %s\n", sapiDevBinaryURL)
-	body, err := NewClient("", "", "").DownloadBytes(sapiDevBinaryURL)
-	if err != nil {
-		return fmt.Errorf("downloading the emulator: %w", err)
-	}
-	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != pin {
-		return fmt.Errorf("the downloaded emulator does not match the games_sapi hash pinned in this chauffeur release")
-	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(dest), ".games_sapi-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o700); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), dest)
-}
-
-func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+// prepareSapiDev checks the pack and the channel before anything is sent, and returns the channel to publish to.
+func prepareSapiDev(dir, plan, channel string) (string, error) {
+	ch, err := sapiRequiredChannel(channel)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	name, err := sapiPlanName(plan)
+	if err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	files, err := lobbyLuaFiles(dir)
+	if err != nil {
+		return "", err
+	}
+	if _, err := checkSapiPack(files, name); err != nil {
+		return "", err
+	}
+	return ch, nil
 }
 
-func sapiDevEnv(dir, plan string, port int, users, features string) ([]string, error) {
-	plan, err := sapiPlanName(plan)
-	if err != nil {
-		return nil, err
-	}
-	if port <= 0 || port > 65535 {
-		return nil, usageErrorf("--port must be between 1 and 65535")
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
-	}
-	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-		return nil, usageErrorf("--dir must be a directory")
-	}
-	env := []string{"SAPI_MODE=dev", "SAPI_BIND=127.0.0.1", "SAPI_PORT=" + strconv.Itoa(port), "SAPI_DEV_DIR=" + abs, "SAPI_DEV_PLAN=" + plan}
-	if users != "" {
-		u, err := filepath.Abs(users)
-		if err != nil {
-			return nil, err
-		}
-		env = append(env, "SAPI_DEV_USERS="+u)
-	}
-	if features != "" {
-		env = append(env, "SAPI_DEV_FEATURES="+features)
-	}
-	return env, nil
-}
-
-func runSapiBinary(bin string, args, env []string) error {
-	c, done, err := sapiCommand(bin, args)
-	if err != nil {
-		return err
-	}
-	defer done()
+func runSapiBinary(bin string, args []string) error {
+	c := exec.Command(bin, args...)
 	c.Stdout = stdout
 	c.Stderr = stderr
 	c.Stdin = os.Stdin
-	c.Env = append(os.Environ(), env...)
 	if err := c.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return usageErrorf("games_sapi exited with code %d", exit.ExitCode())
@@ -851,64 +737,6 @@ func runSapiBinary(bin string, args, env []string) error {
 		return err
 	}
 	return nil
-}
-
-// sapiCommand runs a binary the user named as it is. The chauffeur-cached
-// emulator is read once into a sealed in-memory file, checked against the pin
-// there and executed from that copy, so replacing the cached file after the
-// check cannot change what runs.
-func sapiCommand(bin string, args []string) (*exec.Cmd, func(), error) {
-	cached := sapiCachedBinary()
-	f, err := os.Open(bin)
-	if err != nil {
-		if cached != "" && sameSapiPath(bin, cached) {
-			return nil, nil, err
-		}
-		return exec.Command(bin, args...), func() {}, nil
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, nil, err
-	}
-	if !isSapiCache(bin, info, cached) {
-		return exec.Command(bin, args...), func() {}, nil
-	}
-	pin, err := sapiEmulatorPin()
-	if err != nil {
-		return nil, nil, err
-	}
-	body, err := io.ReadAll(io.LimitReader(f, maxDownloadBytes+1))
-	if err != nil {
-		return nil, nil, err
-	}
-	if int64(len(body)) > maxDownloadBytes {
-		return nil, nil, fmt.Errorf("the cached games_sapi emulator at %s does not match the hash pinned in this chauffeur release", bin)
-	}
-	img, err := sealSapiImage(body, pin)
-	if err != nil {
-		return nil, nil, fmt.Errorf("the cached games_sapi emulator at %s: %w", bin, err)
-	}
-	c := exec.Command(sapiImagePath(img), args...)
-	c.Args[0] = "games_sapi"
-	return c, func() { img.Close() }, nil
-}
-
-func isSapiCache(bin string, info os.FileInfo, cached string) bool {
-	if cached == "" {
-		return false
-	}
-	if sameSapiPath(bin, cached) {
-		return true
-	}
-	cachedInfo, err := os.Stat(cached)
-	return err == nil && os.SameFile(info, cachedInfo)
-}
-
-func sameSapiPath(a, b string) bool {
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
-	return errA == nil && errB == nil && absA == absB
 }
 
 func sapiOptionalChannel(channel string) (string, error) {
@@ -919,13 +747,23 @@ func sapiOptionalChannel(channel string) (string, error) {
 	return ch, nil
 }
 
-func sapiActivateBody(checksum, channel string) (map[string]string, error) {
+// sapiRequiredChannel is for the commands that change what a live channel serves. Only the server knows the
+// game's release channels, so this checks the name's shape and that one was given at all.
+func sapiRequiredChannel(channel string) (string, error) {
 	ch, err := sapiOptionalChannel(channel)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if ch == "" {
-		ch = "stable"
+		return "", usageErrorf("--channel is required: name one of the game's release channels, for example stable or beta")
+	}
+	return ch, nil
+}
+
+func sapiActivateBody(checksum, channel string) (map[string]string, error) {
+	ch, err := sapiRequiredChannel(channel)
+	if err != nil {
+		return nil, err
 	}
 	sum := strings.ToLower(strings.TrimSpace(checksum))
 	if sum == "none" {

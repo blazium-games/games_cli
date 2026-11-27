@@ -36,8 +36,6 @@ const sapiDashboardLink = "https://blazium.games/edit"
 var (
 	sapiInitFeatures string
 	sapiInitForce    bool
-	sapiDevAll       bool
-	sapiDevList      string
 )
 
 var sapiInitCmd = &cobra.Command{
@@ -78,8 +76,6 @@ func init() {
 	sapiInitCmd.Flags().BoolVar(&sapiInitForce, "force", false, "Overwrite files that already exist")
 	sapiFeatureAddCmd.Flags().StringVar(&sapiDir, "dir", ".", "Directory of the pack")
 	sapiFeatureAddCmd.Flags().BoolVar(&sapiInitForce, "force", false, "Overwrite files that already exist")
-	sapiDevCmd.Flags().BoolVar(&sapiDevAll, "all-features", false, "Run the emulator with every feature and capability on, as a game with feature management off would")
-	sapiDevCmd.Flags().StringVar(&sapiDevList, "features", "", "Run the emulator as a managed game with only these features on (comma separated)")
 	sapiFeatureCmd.AddCommand(sapiFeatureAddCmd)
 	sapiCmd.AddCommand(sapiInitCmd)
 }
@@ -149,29 +145,6 @@ func joinKeys(m map[string]bool) string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, ",")
-}
-
-// sapiDevFeatures is the SAPI_DEV_FEATURES value for the emulator. Empty means the emulator runs every feature, like a
-// game that is not managed yet; --all-features says so explicitly; --features runs a managed game with only those on.
-func sapiDevFeatures(all bool, list string) (string, error) {
-	if all && strings.TrimSpace(list) != "" {
-		return "", usageErrorf("use --all-features or --features, not both")
-	}
-	if all {
-		ids := append(append([]string{}, sapiStarterFeatures...), sapiCapabilityIDs...)
-		return strings.Join(ids, ","), nil
-	}
-	if strings.TrimSpace(list) == "" {
-		return "", nil
-	}
-	ids, err := sapiParseFeatureList(list)
-	if err != nil {
-		return "", err
-	}
-	if len(ids) == 0 {
-		return "none", nil
-	}
-	return strings.Join(sapiFeatureClosure(ids), ","), nil
 }
 
 // sapiScaffold writes the shared helpers and the starter scripts and tests for ids into dir. It never overwrites a file
@@ -250,7 +223,7 @@ func sapiRunScaffold(dir string, ids []string, force bool) error {
 	if len(caps) > 0 {
 		logf("%s are capabilities: add them to the `uses` list of the scripts that need them.\n", strings.Join(caps, ", "))
 	}
-	logf("Scaffolding only adds files. Each feature runs once the game owner turns it on at %s (Scripted API page). Test locally with: chauffeur sapi dev --dir %s --all-features\n", sapiDashboardLink, dir)
+	logf("Scaffolding only adds files. Each feature runs once the game owner turns it on at %s (Scripted API page). Check it with: chauffeur sapi test --dir %s (needs the games_sapi binary: --binary or SAPI_BINARY). Serve it on a channel of the live game with: chauffeur sapi dev --dir %s --channel <name>\n", sapiDashboardLink, dir, dir)
 	return nil
 }
 

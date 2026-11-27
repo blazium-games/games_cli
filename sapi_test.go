@@ -17,7 +17,7 @@ import (
 
 func TestSapiActivateBody(t *testing.T) {
 	sum := strings.Repeat("ab", 32)
-	body, err := sapiActivateBody(strings.ToUpper(sum), "")
+	body, err := sapiActivateBody(strings.ToUpper(sum), "stable")
 	if err != nil || body["checksum"] != sum || body["channel"] != "stable" {
 		t.Fatalf("%v %v", body, err)
 	}
@@ -32,6 +32,74 @@ func TestSapiActivateBody(t *testing.T) {
 	}
 	if _, err := sapiActivateBody(sum, "Bad Channel"); err == nil {
 		t.Fatal("accepted a bad channel")
+	}
+	if _, err := sapiActivateBody(sum, ""); err == nil {
+		t.Fatal("activated without a channel: there is no default channel")
+	}
+}
+
+func TestSapiChannelIsRequiredForPublishAndDev(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.luau"), []byte("return {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing is sent: the missing channel is refused before the client is used.
+	if err := runSapiPublish(testClient("http://127.0.0.1:1"), dir, "", true); err == nil {
+		t.Fatal("publish ran without a channel")
+	}
+	if _, err := prepareSapiDev(dir, "free", ""); err == nil {
+		t.Fatal("dev ran without a channel")
+	}
+	if _, err := prepareSapiDev(dir, "free", "Bad Channel"); err == nil {
+		t.Fatal("dev accepted a bad channel")
+	}
+	if _, err := prepareSapiDev(dir, "gold", "beta"); err == nil {
+		t.Fatal("dev accepted an unknown plan")
+	}
+	ch, err := prepareSapiDev(dir, "premium", " Beta ")
+	if err != nil || ch != "beta" {
+		t.Fatalf("%q %v", ch, err)
+	}
+}
+
+func TestSapiDevPublishesAndActivatesTheChannel(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.luau"), []byte("return {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tool/sapi/features" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"managed": false, "features": []any{}}})
+			return
+		}
+		_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		fields = map[string]string{}
+		for {
+			part, err := mr.NextPart()
+			if err != nil {
+				break
+			}
+			raw, _ := io.ReadAll(part)
+			if part.FormName() != "file" {
+				fields[part.FormName()] = string(raw)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"ok": true, "valid": true, "activated": true}})
+	}))
+	defer srv.Close()
+	ch, err := prepareSapiDev(dir, "free", "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runSapiPublish(testClient(srv.URL), dir, ch, true); err != nil {
+		t.Fatal(err)
+	}
+	if fields["channel"] != "beta" || fields["activate"] != "true" {
+		t.Fatalf("%v", fields)
 	}
 }
 
@@ -170,26 +238,6 @@ func TestSapiValidateWithoutBinary(t *testing.T) {
 	}
 	if err := runSapiValidate(dir, "free", filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("a missing --binary was ignored")
-	}
-}
-
-func TestSapiDevEnv(t *testing.T) {
-	dir := t.TempDir()
-	env, err := sapiDevEnv(dir, "business", 9000, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(env, "\n")
-	for _, want := range []string{"SAPI_MODE=dev", "SAPI_BIND=127.0.0.1", "SAPI_PORT=9000", "SAPI_DEV_PLAN=business", "SAPI_DEV_DIR="} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("missing %s in %v", want, env)
-		}
-	}
-	if _, err := sapiDevEnv(dir, "free", 0, "", ""); err == nil {
-		t.Fatal("accepted port 0")
-	}
-	if _, err := sapiDevEnv(filepath.Join(dir, "nope"), "free", 8787, "", ""); err == nil {
-		t.Fatal("accepted a missing dir")
 	}
 }
 
