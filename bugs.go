@@ -141,7 +141,7 @@ func fileInDir(dir, name string) (string, error) {
 }
 
 func writePrivateFile(path string, body []byte) error {
-	return os.WriteFile(path, body, 0o600)
+	return writeFileNoFollow(path, body, 0o600)
 }
 
 func pullBugFiles(c *Client, dir, rawUID string) error {

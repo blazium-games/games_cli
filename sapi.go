@@ -416,7 +416,7 @@ var sapiDataExportCmd = &cobra.Command{
 			fmt.Fprintln(stdout, termText(string(raw)))
 			return nil
 		}
-		if err := os.WriteFile(sapiOut, append(raw, '\n'), 0o600); err != nil {
+		if err := writeFileNoFollow(sapiOut, append(raw, '\n'), 0o600); err != nil {
 			return err
 		}
 		logf("Wrote %d keys to %s\n", len(items), sapiOut)
