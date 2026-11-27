@@ -3,11 +3,32 @@ local function who()
     return "u" .. std.crypto.random_hex(6)
 end
 
+-- The game server reports the match and names the player.
 local function report(user, id, result)
-    return t.call("competitions/report_match", { user = user, body = { match_id = id, result = result } })
+    return t.call("competitions/report_match", { service = true, user = user, body = { match_id = id, result = result } })
 end
 
 return {
+    players_cannot_report_their_own_results = function()
+        local ada = who()
+        t.call("competitions/join", { user = ada })
+        local r = t.call("competitions/report_match", { user = ada, body = { match_id = "m1", result = "win" } })
+        t.eq(r.status, 403)
+        t.eq(t.call("competitions/status", { user = ada, method = "GET" }).body.data.points, 0)
+    end,
+
+    a_game_server_must_name_the_player = function()
+        t.eq(t.call("competitions/report_match", { service = true, body = { match_id = "m1", result = "win" } }).status, 400)
+    end,
+
+    scripts_report_matches_internally = function()
+        local ada = who()
+        t.call("competitions/join", { user = ada })
+        local r = t.call("competitions/report_match", { user = ada, method = "CALL", body = { match_id = "m1", result = "win" } })
+        t.eq(r.status, 200)
+        t.eq(r.body.data.points, 3)
+    end,
+
     join_then_play_for_points = function()
         local ada = who()
         t.eq(t.call("competitions/join", { user = ada }).status, 200)

@@ -2,8 +2,11 @@
 --
 --   GET  /v1/{game}/competitions/status        season, my bracket standings, time left
 --   POST /v1/{game}/competitions/join          enter this week's season (placed in an open bracket)
---   POST /v1/{game}/competitions/report_match  { match_id, result = "win" | "draw" | "loss" }
+--   POST /v1/{game}/competitions/report_match  { match_id, result = "win" | "draw" | "loss" }  game servers only
 --   POST /v1/{game}/competitions/claim_season  { season }  collect the reward for an ended season
+--   CALL competitions/report_match { match_id, result }  (api.call only, from a script that saw the match)
+--
+-- A player cannot report their own result: the game server names the player (X-Sapi-User) and sends the outcome.
 --
 -- Players are placed in brackets of bracket_size (Free 8, Grow 32, Scale 128). Standings are points inside the
 -- bracket, so there is no global write hot spot. Configure "competitions_config":
@@ -112,15 +115,17 @@ actions["POST:join"] = function(req)
     return router.ok(view(s, season, now), version)
 end
 
-actions["POST:report_match"] = function(req)
-    local denied = guard.user(req)
-    if denied then
-        return denied
+local MATCH_SCHEMA = {
+    type = "object",
+    fields = { match_id = { type = "string", max_len = 48 }, result = { type = "string", enum = { "win", "draw", "loss" } } },
+}
+
+-- Score a match for req.user. Only a caller that observed the match may reach this, never the player's own report.
+local function record_match(req)
+    if req.user == nil then
+        return router.bad_request("a game server must name the player (X-Sapi-User)")
     end
-    local body, bad = router.body(req, {
-        type = "object",
-        fields = { match_id = { type = "string", max_len = 48 }, result = { type = "string", enum = { "win", "draw", "loss" } } },
-    })
+    local body, bad = router.body(req, MATCH_SCHEMA)
     if bad then
         return bad
     end
@@ -162,6 +167,21 @@ actions["POST:report_match"] = function(req)
     local out = view(s, season, now)
     out.gained = gained
     return router.ok(out, version)
+end
+
+actions["POST:report_match"] = function(req)
+    if req.caller ~= "service" and req.caller ~= "platform" then
+        return router.fail(403, "forbidden", "match results are reported by the game server")
+    end
+    return record_match(req)
+end
+
+actions["CALL:report_match"] = function(req)
+    local denied = guard.internal(req)
+    if denied then
+        return denied
+    end
+    return record_match(req)
 end
 
 actions["POST:claim_season"] = function(req)
