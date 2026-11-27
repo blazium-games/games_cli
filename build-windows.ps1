@@ -17,20 +17,28 @@ $fullVersion = "$major.$minor.$patch.$build"
 
 Write-Host "Building Windows executables with version $fullVersion" -ForegroundColor Green
 
-# Check if go-winres is installed
-$goWinresPath = Get-Command go-winres -ErrorAction SilentlyContinue
-if (-not $goWinresPath) {
-    Write-Host "Installing go-winres..." -ForegroundColor Yellow
-    go install github.com/tc-hib/go-winres@latest
-}
+# go-winres runs through "go tool" so the version pinned in go.mod and the
+# checksum in go.sum are used, never whatever go-winres is on PATH. It must
+# run before GOOS/GOARCH are set, or go tool builds it for the target platform.
 
 # Generate resource file for chauffeur CLI
 Write-Host "Generating Windows resources for chauffeur..." -ForegroundColor Cyan
-go-winres make --in winres/chauffeur.json --out . --product-version $fullVersion --file-version $fullVersion
+go tool go-winres make --in winres/chauffeur.json --out . --product-version $fullVersion --file-version $fullVersion
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to generate resources for chauffeur" -ForegroundColor Red
     exit 1
 }
+
+# Generate resource file for upload tool
+Write-Host "Generating Windows resources for upload tool..." -ForegroundColor Cyan
+Push-Location cmd/upload
+go tool go-winres make --in ../../winres/upload.json --out . --product-version $fullVersion --file-version $fullVersion
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to generate resources for upload tool" -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
+Pop-Location
 
 # Build chauffeur CLI
 Write-Host "Building chauffeur CLI..." -ForegroundColor Cyan
@@ -42,17 +50,6 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to build chauffeur CLI" -ForegroundColor Red
     exit 1
 }
-
-# Generate resource file for upload tool
-Write-Host "Generating Windows resources for upload tool..." -ForegroundColor Cyan
-Push-Location cmd/upload
-go-winres make --in ../../winres/upload.json --out . --product-version $fullVersion --file-version $fullVersion
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Failed to generate resources for upload tool" -ForegroundColor Red
-    Pop-Location
-    exit 1
-}
-Pop-Location
 
 # Build upload tool
 Write-Host "Building upload tool..." -ForegroundColor Cyan
