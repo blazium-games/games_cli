@@ -151,7 +151,6 @@ jobs:
           VERSION: ${{ needs.resolve-version.outputs.simple_version }}
         run: |
           set -euo pipefail
-          go install github.com/tc-hib/go-winres@latest
           core="${VERSION%%-*}"
           IFS=. read -r major minor patch _ <<< "${core}.0.0.0"
           build=0
@@ -159,7 +158,7 @@ jobs:
             build="$(printf '%s' "${VERSION#*-}" | tr -cd '0-9')"
           fi
           ver="${major:-1}.${minor:-0}.${patch:-0}.${build:-0}"
-          go-winres make --in winres/chauffeur.json --out . --product-version "$ver" --file-version "$ver"
+          go tool go-winres make --in winres/chauffeur.json --out . --product-version "$ver" --file-version "$ver"
 
       - name: Build chauffeur
         env:
