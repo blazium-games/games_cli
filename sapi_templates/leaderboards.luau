@@ -5,7 +5,11 @@
 --   GET  /v1/{game}/leaderboards/profile?board=main&user=   a player's rank, score and stored run details
 --   GET  /v1/{game}/leaderboards/daily_seed                 today's shared seed (same for every player)
 --   POST /v1/{game}/leaderboards/start_run                  { board? }  returns a single-use run_ticket
---   POST /v1/{game}/leaderboards/submit                     { board, score, run_ticket, details? }
+--   POST /v1/{game}/leaderboards/submit                     { board, score, run_ticket, details? }  game server only
+--
+-- A player's client could send any number, so only a game server (a server key naming the player with X-Sapi-User)
+-- may submit a score. The client starts the run and hands its run_ticket to the game server, which checks the run
+-- and submits what it computed.
 --
 -- Boards are named in config "leaderboards_config": { boards = { main = { mode = "best", max_score = 1000000000,
 -- min_run_sec = 3, require_ticket = true } } }. A plan allows a fixed number of boards (Free: 2).
@@ -142,9 +146,11 @@ actions["POST:start_run"] = function(req)
 end
 
 actions["POST:submit"] = function(req)
-    local denied = guard.user(req)
-    if denied then
-        return denied
+    if guard.server(req) then
+        return router.fail(403, "forbidden", "scores are submitted by the game server")
+    end
+    if req.user == nil then
+        return router.bad_request("a game server must name the player (X-Sapi-User)")
     end
     local body, bad = router.body(req, {
         type = "object",
