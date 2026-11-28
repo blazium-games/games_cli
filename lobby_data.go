@@ -139,7 +139,7 @@ var lobbyDataExportCmd = &cobra.Command{
 			fmt.Fprintln(stdout, string(raw))
 			return nil
 		}
-		if err := os.WriteFile(lobbyDataOut, append(raw, '\n'), 0o600); err != nil {
+		if err := writeFileNoFollow(lobbyDataOut, append(raw, '\n'), 0o600); err != nil {
 			return err
 		}
 		logf("Wrote %d keys to %s\n", len(items), lobbyDataOut)

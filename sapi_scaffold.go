@@ -219,7 +219,7 @@ func sapiScaffold(dir string, ids []string, force bool) (written, skipped []stri
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return written, skipped, err
 		}
-		if err := os.WriteFile(target, body, 0o644); err != nil {
+		if err := writeFileNoFollow(target, body, 0o644); err != nil {
 			return written, skipped, err
 		}
 		written = append(written, rel)

@@ -155,7 +155,7 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 		if err := os.MkdirAll(filepath.Dir(p.dest), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(p.dest, body[p.rel], 0o644); err != nil {
+		if err := writeFileNoFollow(p.dest, body[p.rel], 0o644); err != nil {
 			return nil, err
 		}
 		written = append(written, p.rel)
