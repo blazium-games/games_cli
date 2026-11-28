@@ -80,16 +80,24 @@ return {
 
     settle_is_capped_per_call_and_per_day = function()
         local ada, bob = who(), who()
-        local r = t.call("economy/settle", { user = ada, body = { coins = 99999 } })
+        local r = t.call("economy/settle", { service = true, user = ada, body = { coins = 99999 } })
         t.eq(r.body.data.granted.coins, 500)
         local total = 500
         for _ = 1, 12 do
-            local more = t.call("economy/settle", { user = ada, body = { coins = 500 } })
+            local more = t.call("economy/settle", { service = true, user = ada, body = { coins = 500 } })
             total = total + (more.body.data.granted.coins or 0)
         end
         t.eq(total, 5000)
         t.clock.advance(86400)
-        t.eq(t.call("economy/settle", { user = ada, body = { coins = 500 } }).body.data.granted.coins, 500)
+        t.eq(t.call("economy/settle", { service = true, user = ada, body = { coins = 500 } }).body.data.granted.coins, 500)
+    end,
+
+    players_cannot_settle_their_own_runs = function()
+        local ada, bob = who(), who()
+        local r = t.call("economy/settle", { user = ada, body = { coins = 500 } })
+        t.eq(r.status, 403)
+        t.eq(state_of(ada).wallet.coins, nil)
+        t.eq(t.call("economy/settle", { service = true, body = { coins = 500 } }).status, 400)
     end,
 
     internal_actions_are_not_public = function()

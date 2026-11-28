@@ -6,7 +6,7 @@
 --   POST /v1/{game}/economy/equip            { slot, item_id }
 --   POST /v1/{game}/economy/upgrade          { id }
 --   POST /v1/{game}/economy/gacha            { pool? }
---   POST /v1/{game}/economy/settle           { coins?, gems? }   run rewards, capped per call and per day
+--   POST /v1/{game}/economy/settle           { coins?, gems? }   game servers only: run rewards, capped per call and per day
 --   CALL economy/grant { currency | item_id, amount | quantity }   (api.call only)
 --   CALL economy/debit { currency, amount }                        (api.call only)
 --
@@ -248,11 +248,12 @@ actions["POST:gacha"] = function(req)
     return router.ok({ reward = reward, wallet = s.w }, version)
 end
 
--- Run rewards are reported by the client, so they are capped per call and per UTC day.
+-- Run rewards are reported by the game server that hosted the run, never by the player: a player's own report
+-- would mint currency without playing. The per-call and per-UTC-day caps stay as a backstop.
 actions["POST:settle"] = function(req)
-    local denied = guard.user(req)
+    local denied = guard.server(req)
     if denied then
-        return denied
+        return guard.user(req) or denied
     end
     local body, bad = router.body(req, {
         type = "object",
@@ -260,6 +261,9 @@ actions["POST:settle"] = function(req)
     })
     if bad then
         return bad
+    end
+    if req.user == nil then
+        return router.bad_request("a game server must name the player (X-Sapi-User)")
     end
     local conf = cfg()
     local s = load()
