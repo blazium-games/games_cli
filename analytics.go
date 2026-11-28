@@ -94,6 +94,8 @@ func printSapiAnalytics(d map[string]any) {
 	logf("latency avg %s ms  p50 %s ms  p95 %s ms  max %s ms\n", num(t["avg_ms"]), num(t["p50_ms"]), num(t["p95_ms"]), num(t["max_ms"]))
 	logf("data reads %s  writes %s  outbound calls %s  internal calls %s  scheduled %s\n",
 		num(t["data_reads"]), num(t["data_writes"]), num(t["outbound_calls"]), num(t["internal_calls"]), num(t["scheduled"]))
+	logf("calls your scripts made to Blazium %s  over the log-only internal limit %s\n",
+		num(t["script_internal_calls"]), num(t["internal_would_reject"]))
 	logs, _ := d["logics"].([]any)
 	if len(logs) > 0 {
 		logf("by logic:\n")
@@ -126,6 +128,8 @@ func printLobbyAnalytics(d map[string]any) {
 		num(t["cap_rejected"]), num(t["lobby_cap_rejected"]), num(t["host_cap_rejected"]), num(t["players_cap_rejected"]), num(t["would_reject"]))
 	logf("lobby scripts: %s calls, %s errors  data reads %s, writes %s, %s bytes\n",
 		num(t["script_calls"]), num(t["script_errors"]), num(t["data_reads"]), num(t["data_writes"]), num(t["data_bytes"]))
+	logf("calls your scripts made: %s third-party, %s to Blazium  over the log-only internal limit %s\n",
+		num(t["outbound_calls"]), num(t["script_internal_calls"]), num(t["internal_would_reject"]))
 }
 
 func printLobbyLimits(l map[string]any) {
