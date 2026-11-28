@@ -97,13 +97,13 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 	if len(zr.File) > sapiPullMaxFiles {
 		return nil, fmt.Errorf("the pack has more than %d files", sapiPullMaxFiles)
 	}
-	root, err := filepath.Abs(dir)
+	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
 	type planned struct {
 		rel  string
-		dest string
+		name string
 		file *zip.File
 	}
 	var plan []planned
@@ -122,12 +122,20 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 		if total > sapiPullMaxBytes {
 			return nil, fmt.Errorf("the pack is larger than %d MiB unpacked", sapiPullMaxBytes>>20)
 		}
-		dest := filepath.Join(root, filepath.FromSlash(rel))
-		if !strings.HasPrefix(dest, root+string(os.PathSeparator)) {
+		name := filepath.FromSlash(rel)
+		if !strings.HasPrefix(filepath.Join(abs, name), abs+string(os.PathSeparator)) {
 			return nil, fmt.Errorf("the pack has a file outside the directory: %q", f.Name)
 		}
-		plan = append(plan, planned{rel: rel, dest: dest, file: f})
+		plan = append(plan, planned{rel: rel, name: name, file: f})
 	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	body := make(map[string][]byte, len(plan))
 	var conflicts []string
 	for _, p := range plan {
@@ -142,7 +150,7 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 		}
 		body[p.rel] = data
 		if !force {
-			if cur, rerr := os.ReadFile(p.dest); rerr == nil && string(cur) != string(data) {
+			if cur, rerr := root.ReadFile(p.name); rerr == nil && string(cur) != string(data) {
 				conflicts = append(conflicts, p.rel)
 			}
 		}
@@ -152,10 +160,7 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 	}
 	var written []string
 	for _, p := range plan {
-		if err := os.MkdirAll(filepath.Dir(p.dest), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(p.dest, body[p.rel], 0o644); err != nil {
+		if err := writeFileInRoot(root, p.name, body[p.rel], 0o644); err != nil {
 			return nil, err
 		}
 		written = append(written, p.rel)

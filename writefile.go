@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // openForOverwrite opens path for writing, creating it with perm if missing,
@@ -22,6 +23,22 @@ func openForOverwrite(path string, perm os.FileMode) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// writeFileInRoot creates or truncates name under root, making its parent
+// directories first. Every component of name, symlinks included, is resolved
+// relative to root's open handle, so a link that leads out of root fails the
+// write instead of creating or truncating a file elsewhere.
+func writeFileInRoot(root *os.Root, name string, body []byte, perm os.FileMode) error {
+	if dir := filepath.Dir(name); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("refusing to write %s: %w", name, err)
+		}
+	}
+	if err := root.WriteFile(name, body, perm); err != nil {
+		return fmt.Errorf("refusing to write %s: %w", name, err)
+	}
+	return nil
 }
 
 // writeFileNoFollow is os.WriteFile without following a symlink at path.
