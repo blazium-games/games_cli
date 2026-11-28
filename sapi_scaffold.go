@@ -4,9 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -175,7 +173,8 @@ func sapiDevFeatures(all bool, list string) (string, error) {
 }
 
 // sapiScaffold writes the shared helpers and the starter scripts and tests for ids into dir. It never overwrites a file
-// unless force is set, and says which it skipped. Capabilities have no starter script and are returned as notes.
+// unless force is set, and says which it skipped. A symlink below dir is never followed. Capabilities have no starter
+// script and are returned as notes.
 func sapiScaffold(dir string, ids []string, force bool) (written, skipped []string, err error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, nil, usageErrorf("--dir is required")
@@ -206,20 +205,29 @@ func sapiScaffold(dir string, ids []string, force bool) (written, skipped []stri
 		return nil, nil, err
 	}
 	sort.Strings(names)
+	out, err := openBeneathDir(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer out.Close()
+	var todo []string
 	for _, rel := range names {
+		exists, lerr := out.Lexists(rel)
+		if lerr != nil {
+			return nil, nil, lerr
+		}
+		if exists && !force {
+			skipped = append(skipped, rel)
+			continue
+		}
+		todo = append(todo, rel)
+	}
+	for _, rel := range todo {
 		body, rerr := sapiTemplateFS.ReadFile(path.Join(sapiTemplateRoot, rel))
 		if rerr != nil {
 			return written, skipped, rerr
 		}
-		target := filepath.Join(dir, filepath.FromSlash(rel))
-		if _, serr := os.Lstat(target); serr == nil && !force {
-			skipped = append(skipped, rel)
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return written, skipped, err
-		}
-		if err := os.WriteFile(target, body, 0o644); err != nil {
+		if err := out.WriteFile(rel, body, 0o644); err != nil {
 			return written, skipped, err
 		}
 		written = append(written, rel)
