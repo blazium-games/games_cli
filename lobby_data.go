@@ -80,7 +80,7 @@ var lobbyDataGetCmd = &cobra.Command{
 					return emit(item)
 				}
 				raw, _ := json.MarshalIndent(item["value"], "", "  ")
-				fmt.Fprintln(stdout, string(raw))
+				fmt.Fprintln(stdout, termText(string(raw)))
 				return nil
 			}
 		}
@@ -136,7 +136,7 @@ var lobbyDataExportCmd = &cobra.Command{
 		}
 		raw, _ := json.MarshalIndent(items, "", "  ")
 		if lobbyDataOut == "" {
-			fmt.Fprintln(stdout, string(raw))
+			fmt.Fprintln(stdout, termText(string(raw)))
 			return nil
 		}
 		if err := os.WriteFile(lobbyDataOut, append(raw, '\n'), 0o600); err != nil {

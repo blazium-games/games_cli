@@ -283,7 +283,7 @@ func warnDisabledFeatures(client *Client, files []lobbyFile) {
 		return
 	}
 	for _, line := range sapiDisabledWarnings(resp.Data, logics) {
-		fmt.Fprintln(stderr, line)
+		fmt.Fprintln(stderr, termText(line))
 	}
 }
 
