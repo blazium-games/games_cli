@@ -2,8 +2,10 @@ package main
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -87,7 +89,8 @@ func init() {
 }
 
 // extractSapiPack unpacks a pack zip into dir and returns the relative paths it wrote. Only .lua and .luau files are
-// accepted, paths must stay inside dir, and a file that already differs is kept unless force is true.
+// accepted, paths must stay inside dir without passing through a symlink, and a file that already differs is kept
+// unless force is true.
 func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -103,7 +106,6 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 	}
 	type planned struct {
 		rel  string
-		dest string
 		file *zip.File
 	}
 	var plan []planned
@@ -126,8 +128,13 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 		if !strings.HasPrefix(dest, root+string(os.PathSeparator)) {
 			return nil, fmt.Errorf("the pack has a file outside the directory: %q", f.Name)
 		}
-		plan = append(plan, planned{rel: rel, dest: dest, file: f})
+		plan = append(plan, planned{rel: rel, file: f})
 	}
+	out, err := openBeneathDir(root)
+	if err != nil {
+		return nil, err
+	}
+	defer out.Close()
 	body := make(map[string][]byte, len(plan))
 	var conflicts []string
 	for _, p := range plan {
@@ -141,10 +148,13 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 			return nil, err
 		}
 		body[p.rel] = data
-		if !force {
-			if cur, rerr := os.ReadFile(p.dest); rerr == nil && string(cur) != string(data) {
-				conflicts = append(conflicts, p.rel)
-			}
+		cur, rerr := out.ReadFile(p.rel)
+		switch {
+		case errors.Is(rerr, fs.ErrNotExist):
+		case rerr != nil:
+			return nil, rerr
+		case !force && string(cur) != string(data):
+			conflicts = append(conflicts, p.rel)
 		}
 	}
 	if len(conflicts) > 0 {
@@ -152,10 +162,7 @@ func extractSapiPack(zipPath, dir string, force bool) ([]string, error) {
 	}
 	var written []string
 	for _, p := range plan {
-		if err := os.MkdirAll(filepath.Dir(p.dest), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(p.dest, body[p.rel], 0o644); err != nil {
+		if err := out.WriteFile(p.rel, body[p.rel], 0o644); err != nil {
 			return nil, err
 		}
 		written = append(written, p.rel)
