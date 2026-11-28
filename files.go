@@ -71,7 +71,7 @@ func ProcessFiles(client *Client, config *ParsedConfig, followSymlinks bool) err
 	logln("Uploading file...")
 	data, err := uploadBuildFile(client, buildFileUpload{
 		Path: tempZip, Size: st.Size(), Checksum: checksum, BuildID: buildID, Platform: platform, App: asset.App.id(),
-		WebEngine: asset.WebEngine, WebVersion: asset.WebVersion, WebVariant: asset.WebVariant,
+		WebEngine: asset.WebEngine, WebVersion: asset.WebVersion, WebVariant: asset.WebVariant, Offer: offerFrom(asset),
 	})
 	if err != nil {
 		return err

@@ -34,6 +34,41 @@ type buildFileUpload struct {
 	WebEngine  string
 	WebVersion string
 	WebVariant string
+	// Offer is the designation sent with the file; nil sends none, so the publisher's saved choice stays.
+	Offer *fileOffer
+}
+
+// fileOffer is what the website's build row calls "Demo", "For sale", price and designations.
+type fileOffer struct {
+	Designations   string
+	ForSale        bool
+	PriceCents     int64
+	Demo           bool
+	EmbedSupported bool
+}
+
+// offerFrom returns the offer an addfiles spec asks for, or nil when it sets none of it.
+func offerFrom(a *FilesAsset) *fileOffer {
+	if a == nil || (!a.Demo && !a.ForSale && a.PriceCents == 0 && a.Designations == "" && !a.EmbedSupported) {
+		return nil
+	}
+	return &fileOffer{Designations: a.Designations, ForSale: a.ForSale, PriceCents: a.PriceCents, Demo: a.Demo, EmbedSupported: a.EmbedSupported}
+}
+
+func (o fileOffer) fields() []formField {
+	flag := func(b bool) string {
+		if b {
+			return "1"
+		}
+		return "0"
+	}
+	return []formField{
+		{"designations", o.Designations},
+		{"for_sale", flag(o.ForSale)},
+		{"price_cents", strconv.FormatInt(o.PriceCents, 10)},
+		{"is_demo", flag(o.Demo)},
+		{"embed_supported", flag(o.EmbedSupported)},
+	}
 }
 
 func (u buildFileUpload) fields() []formField {
@@ -53,6 +88,9 @@ func (u buildFileUpload) fields() []formField {
 			formField{"web_version", u.WebVersion},
 			formField{"web_variant", u.WebVariant},
 		)
+	}
+	if u.Offer != nil {
+		out = append(out, u.Offer.fields()...)
 	}
 	return out
 }

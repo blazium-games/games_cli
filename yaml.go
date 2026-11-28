@@ -194,6 +194,12 @@ type FilesAsset struct {
 	Arch          string      `yaml:"arch"`
 	Symbols       string      `yaml:"symbols,omitempty"`
 	Files         []FileEntry `yaml:"files"`
+	// The designation sent with the file. All optional; none of them sent leaves what the publisher saved alone.
+	Demo           bool   `yaml:"demo,omitempty"`
+	ForSale        bool   `yaml:"for_sale,omitempty"`
+	PriceCents     int64  `yaml:"price_cents,omitempty"`
+	Designations   string `yaml:"designations,omitempty"`
+	EmbedSupported bool   `yaml:"embed_supported,omitempty"`
 }
 
 func warnAssetType(assetType, typ string) string {
@@ -371,6 +377,25 @@ func validateFilesAsset(a *FilesAsset) error {
 		return err
 	}
 	a.OS, a.Arch, a.Channel = spec.OS, spec.Arch, spec.Channel
+	return validateOffer(a)
+}
+
+// validateOffer rejects a designation the upload service would refuse, so nothing is zipped or sent first.
+func validateOffer(a *FilesAsset) error {
+	if a.PriceCents < 0 {
+		return usageErrorf("price_cents must be zero or more")
+	}
+	priced := a.ForSale || a.PriceCents > 0
+	switch {
+	case a.Demo && a.OS != "web":
+		return usageErrorf("--demo marks a web build as the browser demo, so it needs os web")
+	case a.Demo && priced:
+		return usageErrorf("a demo cannot be priced: drop --demo or --for-sale/--price-cents")
+	case a.EmbedSupported && priced:
+		return usageErrorf("an embed-supported build cannot be priced")
+	case a.ForSale && a.PriceCents <= 0:
+		return usageErrorf("a priced build needs --price-cents")
+	}
 	return nil
 }
 

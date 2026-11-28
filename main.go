@@ -142,10 +142,15 @@ If a build with the same version, type, OS, arch and channel already exists
 (for example from chauffeur build), the files are added to it and its title,
 description and changelog are kept. Otherwise a new build is created.
 
-Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platformFlagHelp + "\n\n" + authHelp,
+Set symbols (or --symbols) to upload Breakpad symbols for the build.
+
+--demo marks an os=web upload as the browser demo, so the store shows a Demo tag and visitors who
+have not bought the game play it. --for-sale/--price-cents, --designations and --embed-supported set the
+same choices the website's build row has. Leave them all out and the choice saved on the website is kept.` + platformFlagHelp + "\n\n" + authHelp,
 	Example: `  chauffeur addfiles --asset addfiles.yml
   chauffeur addfiles --asset addfiles.yml --os linux --arch arm64 --channel beta
-  chauffeur addfiles --asset addfiles.yml --symbols build/game.sym --json`,
+  chauffeur addfiles --asset addfiles.yml --symbols build/game.sym --json
+  chauffeur addfiles --asset web.yml --os web --demo`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		assetFile, _ := cmd.Flags().GetString("asset")
@@ -180,6 +185,21 @@ Set symbols (or --symbols) to upload Breakpad symbols for the build.` + platform
 		}
 		if v, _ := cmd.Flags().GetString("web-variant"); v != "" {
 			a.WebVariant = v
+		}
+		if cmd.Flags().Changed("demo") {
+			a.Demo, _ = cmd.Flags().GetBool("demo")
+		}
+		if cmd.Flags().Changed("for-sale") {
+			a.ForSale, _ = cmd.Flags().GetBool("for-sale")
+		}
+		if cmd.Flags().Changed("price-cents") {
+			a.PriceCents, _ = cmd.Flags().GetInt64("price-cents")
+		}
+		if v, _ := cmd.Flags().GetString("designations"); v != "" {
+			a.Designations = v
+		}
+		if cmd.Flags().Changed("embed-supported") {
+			a.EmbedSupported, _ = cmd.Flags().GetBool("embed-supported")
 		}
 		if a.App, err = appFromCmd(cmd, a.App); err != nil {
 			return err
@@ -416,6 +436,11 @@ func init() {
 	addfilesCmd.Flags().String("web-version", "", "Published version of that web engine")
 	addfilesCmd.Flags().String("web-variant", "", "Web export variant, such as web_nothreads_release")
 	addfilesCmd.Flags().String("symbols", "", symbolsUsage)
+	addfilesCmd.Flags().Bool("demo", false, "Mark this os=web build as the browser demo (shown as a Demo on the store and played by visitors who have not bought the game)")
+	addfilesCmd.Flags().Bool("for-sale", false, "Sell this build on its own (needs --price-cents)")
+	addfilesCmd.Flags().Int64("price-cents", 0, "Price of this build in cents")
+	addfilesCmd.Flags().String("designations", "", "Comma-separated store shelves and launch hosts this build is for, such as steam,discord")
+	addfilesCmd.Flags().Bool("embed-supported", false, "Allow this web build to be embedded on other sites")
 	addfilesCmd.Flags().Bool("follow-symlinks", false, "Upload symlink targets listed in the spec. Off by default")
 	addAppFlags(addfilesCmd)
 
