@@ -206,20 +206,25 @@ func sapiScaffold(dir string, ids []string, force bool) (written, skipped []stri
 		return nil, nil, err
 	}
 	sort.Strings(names)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, nil, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
 	for _, rel := range names {
 		body, rerr := sapiTemplateFS.ReadFile(path.Join(sapiTemplateRoot, rel))
 		if rerr != nil {
 			return written, skipped, rerr
 		}
-		target := filepath.Join(dir, filepath.FromSlash(rel))
-		if _, serr := os.Lstat(target); serr == nil && !force {
+		target := filepath.FromSlash(rel)
+		if _, serr := root.Lstat(target); serr == nil && !force {
 			skipped = append(skipped, rel)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return written, skipped, err
-		}
-		if err := os.WriteFile(target, body, 0o644); err != nil {
+		if err := writeFileInRoot(root, target, body, 0o644); err != nil {
 			return written, skipped, err
 		}
 		written = append(written, rel)
