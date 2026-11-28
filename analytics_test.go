@@ -37,11 +37,11 @@ func TestPrintAnalyticsAndAudit(t *testing.T) {
 	defer restore()
 	printSapiAnalytics(map[string]any{
 		"plan": "free", "since": "2026-01-01",
-		"totals": map[string]any{"calls": 1200.0, "errors": 3.0, "refused": 7.0, "quota_rejects": 4.0, "avg_ms": 4.5, "p95_ms": 20.0},
+		"totals": map[string]any{"calls": 1200.0, "errors": 3.0, "refused": 7.0, "quota_rejects": 4.0, "avg_ms": 4.5, "p95_ms": 20.0, "script_internal_calls": 118.0, "internal_would_reject": 6.0},
 		"logics": []any{map[string]any{"logic": "daily", "calls": 900.0, "errors": 1.0, "refused": 2.0}},
 		"daily":  []any{map[string]any{"day": "2026-01-02", "calls": 100.0, "errors": 0.0, "refused": 0.0}},
 	})
-	for _, want := range []string{"plan free", "calls 1200", "refused 7", "quota 4", "avg 4.5 ms", "daily", "2026-01-02"} {
+	for _, want := range []string{"plan free", "calls 1200", "refused 7", "quota 4", "avg 4.5 ms", "made to Blazium 118", "internal limit 6", "daily", "2026-01-02"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in:\n%s", want, out.String())
 		}
@@ -50,9 +50,9 @@ func TestPrintAnalyticsAndAudit(t *testing.T) {
 	printLobbyAnalytics(map[string]any{
 		"plan": "free", "since": "2026-01-01",
 		"limits": map[string]any{"lobbies_per_game": 32.0, "players_per_lobby": 4.0, "lobbies_per_host": 2.0, "turn_allocations": 0.0, "lobby_data_bytes": 4096.0},
-		"totals": map[string]any{"lobbies_created": 50.0, "peak_open_lobbies": 12.0, "cap_rejected": 5.0, "lobby_cap_rejected": 3.0, "host_cap_rejected": 1.0, "players_cap_rejected": 1.0},
+		"totals": map[string]any{"lobbies_created": 50.0, "peak_open_lobbies": 12.0, "cap_rejected": 5.0, "lobby_cap_rejected": 3.0, "host_cap_rejected": 1.0, "players_cap_rejected": 1.0, "outbound_calls": 9.0, "script_internal_calls": 4.0, "internal_would_reject": 2.0},
 	})
-	for _, want := range []string{"32 open lobbies", "4 players per lobby", "2 per host", "opened 50", "peak open 12", "turned away at the plan's caps 5"} {
+	for _, want := range []string{"32 open lobbies", "4 players per lobby", "2 per host", "opened 50", "peak open 12", "turned away at the plan's caps 5", "9 third-party, 4 to Blazium", "internal limit 2"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in:\n%s", want, out.String())
 		}
